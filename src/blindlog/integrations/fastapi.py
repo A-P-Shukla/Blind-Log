@@ -27,14 +27,34 @@ class BlindLogFastAPIMiddleware:
 
         body_bytes = b""
         more_body = True
-        
-        # Ingest the payload into memory to execute our mask routines safely
         messages = []
+        
+        # Intercept output status via a synthetic send proxy
+        async def send_proxy(message):
+            if message["type"] == "http.response.start":
+                print(f"BlindLog [Response Status]: {message['status']}")
+            await send(message)
+
+        # Ingest the payload into memory to execute our mask routines safely
         while more_body:
             message = await receive()
             messages.append(message)
             if message["type"] == "http.request":
                 body_bytes += message.get("body", b"")
+                
+                # OOM Protection for Malicious Chunked Streams
+                if len(body_bytes) > 5_000_000:
+                    print("BlindLog [Alert]: OOM Protection Tripped! Chunked stream exceeds 5MB. Logging aborted.")
+                    body_bytes = b"" # Flush volatile buffer immediately
+                    
+                    # Yield a hybrid proxy: drains our cached chunks first, then native stream.
+                    async def dynamic_receive_proxy():
+                        if messages:
+                            return messages.pop(0)
+                        return await receive()
+                        
+                    return await self.app(scope, dynamic_receive_proxy, send_proxy)
+
                 more_body = message.get("more_body", False)
             else:
                 more_body = False
@@ -59,12 +79,6 @@ class BlindLogFastAPIMiddleware:
             if messages:
                 return messages.pop(0)
             return {"type": "http.request", "body": b"", "more_body": False}
-
-        # Intercept output status via a synthetic send proxy
-        async def send_proxy(message):
-            if message["type"] == "http.response.start":
-                print(f"BlindLog [Response Status]: {message['status']}")
-            await send(message)
 
         # Plumb the execution route
         await self.app(scope, receive_proxy, send_proxy)

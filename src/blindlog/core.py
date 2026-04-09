@@ -65,6 +65,9 @@ class BlindLogger(MaskingEngine):
         The hybrid evaluation for a single string value.
         Delegates strictly to the generic extensible RuleRegistry.
         """
+        if len(value) > 10000:
+            return "<Skipped due to length: ReDoS Protection>"
+            
         fallback_hash = lambda v: f"blind:{self._hash(v, length=10)}"
         return self.registry.process_value(value, fallback_hash)
 
