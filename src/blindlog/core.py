@@ -4,8 +4,9 @@ from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX
 from blindlog.utils import walk_and_mask
 from blindlog.config import BlindLogConfig
 from blindlog.registry import RuleRegistry
+from blindlog.interfaces import MaskingEngine
 
-class BlindLogger:
+class BlindLogger(MaskingEngine):
     """
     Core engine for Deterministic Pseudonymization and Structure-Preserving Masking.
     """

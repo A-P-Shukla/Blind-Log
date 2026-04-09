@@ -2,15 +2,16 @@ import logging
 import copy
 from typing import Optional
 from blindlog.core import BlindLogger
+from blindlog.interfaces import MaskingEngine
 
 class BlindLogFormatter(logging.Formatter):
     """
     A custom logging formatter that intercepts and pseudonymizes sensitive data 
     before it is written to the log stream.
     """
-    def __init__(self, fmt: Optional[str] = None, datefmt: Optional[str] = None, style: str = '%', logger: Optional[BlindLogger] = None):
+    def __init__(self, fmt: Optional[str] = None, datefmt: Optional[str] = None, style: str = '%', blind_logger: Optional[MaskingEngine] = None):
         super().__init__(fmt, datefmt, style)
-        self.blind_logger = logger or BlindLogger()
+        self.blind_logger = blind_logger or BlindLogger()
 
     def format(self, record: logging.LogRecord) -> str:
         """

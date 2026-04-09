@@ -1,12 +1,13 @@
 import json
 from blindlog.core import BlindLogger
+from blindlog.interfaces import MaskingEngine
 
 class BlindLogFastAPIMiddleware:
     """
     Pure ASGI Middleware to intercept and mask request bodies and metadata
     without violating or corrupting underlying asynchronous streams.
     """
-    def __init__(self, app, blind_logger: BlindLogger = None):
+    def __init__(self, app, blind_logger: MaskingEngine = None):
         self.app = app
         self.blind_logger = blind_logger or BlindLogger()
 
