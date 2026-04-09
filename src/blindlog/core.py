@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX
 from blindlog.utils import walk_and_mask
 from blindlog.config import BlindLogConfig
+from blindlog.registry import RuleRegistry
 
 class BlindLogger:
     """
@@ -18,6 +19,11 @@ class BlindLogger:
         For ease of use and backwards compatibility, also accepts raw config kwargs to hydrate dynamically.
         """
         self.config = config if config else BlindLogConfig(**kwargs)
+        
+        # Load registry dynamically
+        self.registry = RuleRegistry()
+        self.registry.register(EMAIL_REGEX, self._mask_email)
+        self.registry.register(CREDIT_CARD_REGEX, self._mask_cc)
         
     def _hash(self, value: str, length: int = 12) -> str:
         """
@@ -56,31 +62,20 @@ class BlindLogger:
     def _mask_value(self, value: str) -> str:
         """
         The hybrid evaluation for a single string value.
-        Determines the format, applies the relevant mask.
+        Delegates strictly to the generic extensible RuleRegistry.
         """
-        if EMAIL_REGEX.fullmatch(value):
-            return self._mask_email(value)
-        elif CREDIT_CARD_REGEX.fullmatch(value):
-            return self._mask_cc(value)
-        else:
-            # Generic string fallback
-            return f"blind:{self._hash(value, length=10)}"
+        fallback_hash = lambda v: f"blind:{self._hash(v, length=10)}"
+        return self.registry.process_value(value, fallback_hash)
 
     def _mask_slow_path(self, text: str) -> str:
         """
         Slow path: scans arbitrary text for embedded PII.
-        E.g., "User akhand@gmail.com failed."
         Limits evaluation to 10,000 characters to prevent ReDoS.
         """
         if len(text) > 10000:
             return "<Skipped due to length: ReDoS Protection>"
             
-        # Replace found emails
-        text = EMAIL_REGEX.sub(lambda m: self._mask_email(m.group(0)), text)
-        # Replace found CCs
-        text = CREDIT_CARD_REGEX.sub(lambda m: self._mask_cc(m.group(0)), text)
-        text = CREDIT_CARD_REGEX.sub(lambda m: self._mask_cc(m.group(0)), text)
-        return text
+        return self.registry.process_text(text)
 
     def mask(self, payload: Any) -> Any:
         """

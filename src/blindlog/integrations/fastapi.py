@@ -1,65 +1,69 @@
 import json
 from blindlog.core import BlindLogger
 
-try:
-    from fastapi import Request, Response
-    from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-    from starlette.requests import ClientDisconnect
-except ImportError:
-    raise ImportError("FastAPI/Starlette is required for this middleware. Run `pip install blindlog[fastapi]`")
-
-
-class BlindLogFastAPIMiddleware(BaseHTTPMiddleware):
+class BlindLogFastAPIMiddleware:
     """
-    FastAPI Middleware to intercept and mask request bodies and metadata
-    before they are processed or logged.
+    Pure ASGI Middleware to intercept and mask request bodies and metadata
+    without violating or corrupting underlying asynchronous streams.
     """
     def __init__(self, app, blind_logger: BlindLogger = None):
-        super().__init__(app)
+        self.app = app
         self.blind_logger = blind_logger or BlindLogger()
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        # Check Content-Length for OOM Protection (Skip deep-mask on giant files)
-        content_length = int(request.headers.get("content-length", 0))
-        if content_length > 5_000_000:  # 5MB cutoff
+    async def __call__(self, scope, receive, send):
+        # Pass through all non-HTTP connections (e.g. WebSockets) strictly untouched.
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+            
+        # OOM Protection via initial header analysis (limit 5MB buffer size default)
+        headers = dict(scope.get("headers", []))
+        content_length_str = headers.get(b"content-length", b"0").decode("utf-8", errors="ignore")
+        content_length = int(content_length_str) if content_length_str.isdigit() else 0
+        
+        if content_length > 5_000_000:
             print("BlindLog [Alert]: Payload omitted from logging due to exceeding 5MB safety limit.")
-            return await call_next(request)
+            return await self.app(scope, receive, send)
 
-        # 1. Intercept & Mask Request Body
         body_bytes = b""
-        try:
-            body_bytes = await request.body()
-        except ClientDisconnect:
-            pass
+        more_body = True
+        
+        # Ingest the payload into memory to execute our mask routines safely
+        messages = []
+        while more_body:
+            message = await receive()
+            messages.append(message)
+            if message["type"] == "http.request":
+                body_bytes += message.get("body", b"")
+                more_body = message.get("more_body", False)
+            else:
+                more_body = False
 
+        # Execute Logger Masker on collected bytes
         if body_bytes:
             try:
                 parsed_body = json.loads(body_bytes)
                 masked_request_body = self.blind_logger.mask(parsed_body)
                 print(f"BlindLog [Request Body]: {json.dumps(masked_request_body)}")
             except json.JSONDecodeError:
-                # If it's x-www-form-urlencoded or plain text
-                # We also check the true byte-length again just in case `content-length` was spoofed
                 if len(body_bytes) < 5_000_000:
                     masked_string = self.blind_logger.mask(body_bytes.decode('utf-8', errors='ignore'))
                     print(f"BlindLog [Request Body]: {masked_string}")
 
-        # FastAPI middleware consumes the stream when we read `request.body()`.
-        # We must re-inject the bytes so the actual route handler can read them.
-        async def receive():
-            return {"type": "http.request", "body": body_bytes}
-        request._receive = receive
+        # Inject safely unmasked core headers to terminal
+        decoded_headers = {k.decode('utf-8'): v.decode('utf-8') for k, v in headers.items()}
+        print(f"BlindLog [Headers]: {json.dumps(self.blind_logger.mask(decoded_headers))}")
 
-        # Optional: Mask headers
-        masked_headers = self.blind_logger.mask(dict(request.headers))
-        print(f"BlindLog [Headers]: {json.dumps(masked_headers)}")
+        # Construct a synthetic receive coroutine to pipe original buffer events sequentially into FastAPI internals.
+        async def receive_proxy():
+            if messages:
+                return messages.pop(0)
+            return {"type": "http.request", "body": b"", "more_body": False}
 
-        # 2. Process downstream Request
-        response = await call_next(request)
+        # Intercept output status via a synthetic send proxy
+        async def send_proxy(message):
+            if message["type"] == "http.response.start":
+                print(f"BlindLog [Response Status]: {message['status']}")
+            await send(message)
 
-        # 3. Process Response
-        # Note: Intercepting response bodies in Starlette requires fully evaluating the 
-        # streaming response iterator. For v1, we focus on safe status-code logging.
-        print(f"BlindLog [Response Status]: {response.status_code}")
-        
-        return response
+        # Plumb the execution route
+        await self.app(scope, receive_proxy, send_proxy)
