@@ -1,6 +1,9 @@
 import json
+import logging
 from blindlog.core import BlindLogger
 from blindlog.interfaces import MaskingEngine
+
+mw_logger = logging.getLogger("blindlog.middleware")
 
 class BlindLogFastAPIMiddleware:
     """
@@ -22,17 +25,34 @@ class BlindLogFastAPIMiddleware:
         content_length = int(content_length_str) if content_length_str.isdigit() else 0
         
         if content_length > 5_000_000:
-            print("BlindLog [Alert]: Payload omitted from logging due to exceeding 5MB safety limit.")
+            mw_logger.warning("BlindLog: Payload omitted from logging due to exceeding 5MB safety limit.")
             return await self.app(scope, receive, send)
 
         body_bytes = b""
         more_body = True
         messages = []
+
+        # Fix #11: Collect response body chunks for masking
+        response_body_chunks = []
+        response_started = False
         
-        # Intercept output status via a synthetic send proxy
+        # Fix #17: Replace print() with structured logging throughout
+        # Intercept output status and response body via a synthetic send proxy
         async def send_proxy(message):
+            nonlocal response_started
             if message["type"] == "http.response.start":
-                print(f"BlindLog [Response Status]: {message['status']}")
+                response_started = True
+                mw_logger.info(f"BlindLog [Response Status]: {message['status']}")
+            elif message["type"] == "http.response.body":
+                # Fix #11: Mask response body if it's JSON
+                resp_body = message.get("body", b"")
+                if resp_body:
+                    try:
+                        parsed_resp = json.loads(resp_body)
+                        masked_resp = self.blind_logger.mask(parsed_resp)
+                        mw_logger.info(f"BlindLog [Response Body]: {json.dumps(masked_resp)}")
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        mw_logger.debug("BlindLog [Response Body]: <non-JSON response, skipped>")
             await send(message)
 
         # Ingest the payload into memory to execute our mask routines safely
@@ -44,8 +64,8 @@ class BlindLogFastAPIMiddleware:
                 
                 # OOM Protection for Malicious Chunked Streams
                 if len(body_bytes) > 5_000_000:
-                    print("BlindLog [Alert]: OOM Protection Tripped! Chunked stream exceeds 5MB. Logging aborted.")
-                    body_bytes = b"" # Flush volatile buffer immediately
+                    mw_logger.warning("BlindLog: OOM Protection Tripped! Chunked stream exceeds 5MB. Logging aborted.")
+                    body_bytes = b""  # Flush volatile buffer immediately
                     
                     # Yield a hybrid proxy: drains our cached chunks first, then native stream.
                     async def dynamic_receive_proxy():
@@ -64,15 +84,15 @@ class BlindLogFastAPIMiddleware:
             try:
                 parsed_body = json.loads(body_bytes)
                 masked_request_body = self.blind_logger.mask(parsed_body)
-                print(f"BlindLog [Request Body]: {json.dumps(masked_request_body)}")
+                mw_logger.info(f"BlindLog [Request Body]: {json.dumps(masked_request_body)}")
             except json.JSONDecodeError:
                 if len(body_bytes) < 5_000_000:
                     masked_string = self.blind_logger.mask(body_bytes.decode('utf-8', errors='ignore'))
-                    print(f"BlindLog [Request Body]: {masked_string}")
+                    mw_logger.info(f"BlindLog [Request Body]: {masked_string}")
 
         # Inject safely unmasked core headers to terminal
         decoded_headers = {k.decode('utf-8'): v.decode('utf-8') for k, v in headers.items()}
-        print(f"BlindLog [Headers]: {json.dumps(self.blind_logger.mask(decoded_headers))}")
+        mw_logger.info(f"BlindLog [Headers]: {json.dumps(self.blind_logger.mask(decoded_headers))}")
 
         # Construct a synthetic receive coroutine to pipe original buffer events sequentially into FastAPI internals.
         async def receive_proxy():

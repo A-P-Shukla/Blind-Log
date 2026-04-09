@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Any, TypeVar
+from typing import Any, Union
 
-# TPayload loosely maps to JSON-serializable structures and primitives
-TPayload = TypeVar('TPayload', str, int, float, bool, None, dict, list)
+# Fix #18: Use Union instead of constrained TypeVar for correct type semantics
+Payload = Union[str, int, float, bool, None, dict, list]
 
 class MaskingEngine(ABC):
     """
@@ -13,7 +13,7 @@ class MaskingEngine(ABC):
     """
     
     @abstractmethod
-    def mask(self, payload: TPayload) -> TPayload:
+    def mask(self, payload: Any) -> Any:
         """
         Recursively process a payload (String, Dictionary, or List)
         and securely blind all matched sensitive nodes.

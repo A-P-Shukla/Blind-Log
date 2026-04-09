@@ -20,11 +20,14 @@ def walk_and_mask(
     if visited is None:
         visited = set()
 
-    # Base cases for recursion
-    if data is None or isinstance(data, (int, float, bool)) and not force_mask:
+    # Fix #2: Separate base cases with correct operator precedence
+    # Fix #10: Remove duplicate dead `if data is None` check
+    if data is None:
+        if force_mask:
+            return mask_value_fn("None")
         return data
 
-    if data is None:
+    if isinstance(data, (int, float, bool)) and not force_mask:
         return data
 
     # Cycle detection
@@ -40,8 +43,9 @@ def walk_and_mask(
         for k, v in data.items():
             k_lower = str(k).lower()
             
-            # Fast Path: Key matches or we are forcibly masking inside a parent sensitive key
-            if force_mask or any(sensitive in k_lower for sensitive in sensitive_keys):
+            # Fix #13: Exact key matching instead of substring to prevent false positives
+            # e.g. "email_verified" no longer matches "email"
+            if force_mask or k_lower in sensitive_keys:
                 if isinstance(v, str):
                     masked_dict[k] = mask_value_fn(v)
                 elif isinstance(v, (int, float)):

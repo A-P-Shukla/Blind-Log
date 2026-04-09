@@ -1,7 +1,6 @@
 import logging
 import copy
 from typing import Optional
-from blindlog.core import BlindLogger
 from blindlog.interfaces import MaskingEngine
 
 class BlindLogFormatter(logging.Formatter):
@@ -11,7 +10,17 @@ class BlindLogFormatter(logging.Formatter):
     """
     def __init__(self, fmt: Optional[str] = None, datefmt: Optional[str] = None, style: str = '%', blind_logger: Optional[MaskingEngine] = None):
         super().__init__(fmt, datefmt, style)
-        self.blind_logger = blind_logger or BlindLogger()
+        # Fix #9: Defer BlindLogger construction to avoid crashing if BLINDLOG_SECRET is not set at import time
+        self._blind_logger = blind_logger
+        self._initialized = blind_logger is not None
+
+    @property
+    def blind_logger(self):
+        if not self._initialized:
+            from blindlog.core import BlindLogger
+            self._blind_logger = BlindLogger()
+            self._initialized = True
+        return self._blind_logger
 
     def format(self, record: logging.LogRecord) -> str:
         """

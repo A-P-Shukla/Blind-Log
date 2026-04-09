@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blindlog"
-version = "0.1.0"
+version = "1.1.0"
 description = "Deterministic privacy-preserving logger for Python."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     # Zero dependencies for core!
-    # We use standard lib: json, logging, hmac, hashlib, os, re
+    # We use standard lib: json, logging, hashlib, os, re
 ]
 
 [project.optional-dependencies]
@@ -19,3 +19,6 @@ fastapi = ["fastapi", "starlette"]  # Users only install this if they need it
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = ["blindlog", "blindlog.integrations"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

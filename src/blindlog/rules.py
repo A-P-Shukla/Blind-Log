@@ -24,5 +24,6 @@ DEFAULT_SENSITIVE_KEYS = {
     "credit_card", 
     "cc_number", 
     "email", 
-    "authorization"
+    "authorization",
+    "credentials"
 }
