@@ -25,9 +25,7 @@ class BlindLogger:
         self.debug_mode = debug_mode or env_debug
 
         if not self.secret_key and not self.debug_mode:
-            import warnings
-            warnings.warn("BlindLog: BLINDLOG_SECRET is not set. Using a weak default for development. Do NOT do this in production.")
-            self.secret_key = "development-default-secret"
+            raise ValueError("BlindLog: BLINDLOG_SECRET is not set. Refusing to run in non-debug mode to prevent cryptographic bypass.")
 
         # BLAKE2b supports keys up to 64 bytes. We ensure our bytes fit within the bounds.
         self._blake_key = (self.secret_key + self.salt).encode('utf-8')[:64]
@@ -50,7 +48,7 @@ class BlindLogger:
         """Structure-preserving mask for emails: ref_HASH...@masked.com"""
         try:
             local, domain = email.rsplit('@', 1)
-            hash_val = self._hash(email, length=8)
+            hash_val = self._hash(email, length=12)
             return f"ref_{hash_val}...@masked.com"
         except ValueError:
             return self._hash(email) # Fallback if not strictly an email
@@ -61,8 +59,9 @@ class BlindLogger:
         if len(clean_cc) >= 12:
             first_4 = clean_cc[:4]
             last_4 = clean_cc[-4:]
-            hash_val = self._hash(clean_cc, length=4)
-            return f"{first_4}-xxxx-xxxx-{last_4}"
+            hash_val = self._hash(clean_cc, length=12)
+            # Use 12 hex digits in the middle to maintain high entropy: 4111-abcdef-abcdef-1234
+            return f"{first_4}-{hash_val[:6]}-{hash_val[6:12]}-{last_4}"
         return self._hash(cc)
 
     def _mask_value(self, value: str) -> str:
@@ -82,10 +81,15 @@ class BlindLogger:
         """
         Slow path: scans arbitrary text for embedded PII.
         E.g., "User akhand@gmail.com failed."
+        Limits evaluation to 10,000 characters to prevent ReDoS.
         """
+        if len(text) > 10000:
+            return "<Skipped due to length: ReDoS Protection>"
+            
         # Replace found emails
         text = EMAIL_REGEX.sub(lambda m: self._mask_email(m.group(0)), text)
         # Replace found CCs
+        text = CREDIT_CARD_REGEX.sub(lambda m: self._mask_cc(m.group(0)), text)
         text = CREDIT_CARD_REGEX.sub(lambda m: self._mask_cc(m.group(0)), text)
         return text
 

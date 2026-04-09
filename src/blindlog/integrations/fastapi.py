@@ -19,6 +19,12 @@ class BlindLogFastAPIMiddleware(BaseHTTPMiddleware):
         self.blind_logger = blind_logger or BlindLogger()
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        # Check Content-Length for OOM Protection (Skip deep-mask on giant files)
+        content_length = int(request.headers.get("content-length", 0))
+        if content_length > 5_000_000:  # 5MB cutoff
+            print("BlindLog [Alert]: Payload omitted from logging due to exceeding 5MB safety limit.")
+            return await call_next(request)
+
         # 1. Intercept & Mask Request Body
         body_bytes = b""
         try:
@@ -33,8 +39,10 @@ class BlindLogFastAPIMiddleware(BaseHTTPMiddleware):
                 print(f"BlindLog [Request Body]: {json.dumps(masked_request_body)}")
             except json.JSONDecodeError:
                 # If it's x-www-form-urlencoded or plain text
-                masked_string = self.blind_logger.mask(body_bytes.decode('utf-8', errors='ignore'))
-                print(f"BlindLog [Request Body]: {masked_string}")
+                # We also check the true byte-length again just in case `content-length` was spoofed
+                if len(body_bytes) < 5_000_000:
+                    masked_string = self.blind_logger.mask(body_bytes.decode('utf-8', errors='ignore'))
+                    print(f"BlindLog [Request Body]: {masked_string}")
 
         # FastAPI middleware consumes the stream when we read `request.body()`.
         # We must re-inject the bytes so the actual route handler can read them.

@@ -6,7 +6,8 @@ def walk_and_mask(
     sensitive_keys: Set[str], 
     mask_value_fn: Callable[[str], str],
     mask_text_fn: Callable[[str], str],
-    visited: set = None
+    visited: set = None,
+    force_mask: bool = False
 ) -> Any:
     """
     Recursively walks through dictionaries and lists to mask sensitive data.
@@ -20,7 +21,10 @@ def walk_and_mask(
         visited = set()
 
     # Base cases for recursion
-    if data is None or isinstance(data, (int, float, bool)):
+    if data is None or isinstance(data, (int, float, bool)) and not force_mask:
+        return data
+
+    if data is None:
         return data
 
     # Cycle detection
@@ -36,31 +40,39 @@ def walk_and_mask(
         for k, v in data.items():
             k_lower = str(k).lower()
             
-            # Fast Path: Key matches
-            if any(sensitive in k_lower for sensitive in sensitive_keys):
+            # Fast Path: Key matches or we are forcibly masking inside a parent sensitive key
+            if force_mask or any(sensitive in k_lower for sensitive in sensitive_keys):
                 if isinstance(v, str):
                     masked_dict[k] = mask_value_fn(v)
                 elif isinstance(v, (int, float)):
                     masked_dict[k] = mask_value_fn(str(v))
                 else:
-                    # If it's a nested object under a sensitive key, we might want to mask the whole tree
-                    # For simplicity in v1, we serialize to string and mask
-                    masked_dict[k] = mask_value_fn(str(v))
+                    # It's a nested object under a sensitive key; traverse it enforcing masking on all scalar leaves
+                    masked_dict[k] = walk_and_mask(v, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=True)
             else:
-                # Recurse
-                masked_dict[k] = walk_and_mask(v, sensitive_keys, mask_value_fn, mask_text_fn, visited)
+                # Recurse normally
+                masked_dict[k] = walk_and_mask(v, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=False)
                 
         visited.remove(obj_id)
         return masked_dict
 
     elif isinstance(data, list):
-        masked_list = [walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited) for item in data]
+        masked_list = [walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=force_mask) for item in data]
         visited.remove(obj_id)
         return masked_list
         
     elif isinstance(data, str):
-        # Slow Path: Escaped or embedded PII inside a generic text block
-        result = mask_text_fn(data)
+        if force_mask:
+            result = mask_value_fn(data)
+        else:
+            # Slow Path: Escaped or embedded PII inside a generic text block
+            result = mask_text_fn(data)
+        visited.remove(obj_id)
+        return result
+
+    # Fallback for primitive types forced to be masked
+    if force_mask and isinstance(data, (int, float, bool)):
+        result = mask_value_fn(str(data))
         visited.remove(obj_id)
         return result
 

@@ -30,8 +30,9 @@ class BlindLogFormatter(logging.Formatter):
                 
             # Intercept args representing positional string interpolations
             if record_copy.args:
+                args_copy = copy.deepcopy(record_copy.args)
                 masked_args = tuple(self.blind_logger.mask(arg) if isinstance(arg, (str, dict, list)) else arg 
-                                  for arg in record_copy.args)
+                                  for arg in args_copy)
                 record_copy.args = masked_args
         except Exception:
             # Ensure the logging pipeline never breaks the application, even if masking fails
