@@ -1,8 +1,8 @@
-import os
 import hashlib
 from typing import Any, Dict, List, Optional
-from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX, DEFAULT_SENSITIVE_KEYS
+from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX
 from blindlog.utils import walk_and_mask
+from blindlog.config import BlindLogConfig
 
 class BlindLogger:
     """
@@ -10,25 +10,14 @@ class BlindLogger:
     """
     def __init__(
         self, 
-        secret_key: Optional[str] = None, 
-        salt: Optional[str] = None,
-        sensitive_keys: Optional[set] = None,
-        debug_mode: bool = False
+        config: Optional[BlindLogConfig] = None,
+        **kwargs
     ):
-        # Load configuration, prioritizing passed args over environment variables
-        self.secret_key = secret_key or os.environ.get("BLINDLOG_SECRET", "")
-        self.salt = salt or os.environ.get("BLINDLOG_SALT", "")
-        self.sensitive_keys = sensitive_keys or DEFAULT_SENSITIVE_KEYS
-        
-        # In debug mode, we bypass masking entirely
-        env_debug = os.environ.get("BLINDLOG_DEBUG", "").lower() in ("true", "1", "yes")
-        self.debug_mode = debug_mode or env_debug
-
-        if not self.secret_key and not self.debug_mode:
-            raise ValueError("BlindLog: BLINDLOG_SECRET is not set. Refusing to run in non-debug mode to prevent cryptographic bypass.")
-
-        # BLAKE2b supports keys up to 64 bytes. We ensure our bytes fit within the bounds.
-        self._blake_key = (self.secret_key + self.salt).encode('utf-8')[:64]
+        """
+        Initializes the BlindLogger engine. Accepts a formal `BlindLogConfig` object.
+        For ease of use and backwards compatibility, also accepts raw config kwargs to hydrate dynamically.
+        """
+        self.config = config if config else BlindLogConfig(**kwargs)
         
     def _hash(self, value: str, length: int = 12) -> str:
         """
@@ -39,7 +28,7 @@ class BlindLogger:
             value = str(value)
             
         digest_bytes = max(1, (length + 1) // 2)
-        h = hashlib.blake2b(value.encode('utf-8'), key=self._blake_key, digest_size=digest_bytes)
+        h = hashlib.blake2b(value.encode('utf-8'), key=self.config.blake_key, digest_size=digest_bytes)
         
         # Slicing is still applied in case 'length' requested is odd (e.g. 5 bytes -> 10 hex chars string, etc)
         return h.hexdigest()[:length]
@@ -97,12 +86,12 @@ class BlindLogger:
         """
         Public endpoint to mask a payload.
         """
-        if self.debug_mode:
+        if self.config.debug_mode:
             return payload
             
         return walk_and_mask(
             data=payload, 
-            sensitive_keys=self.sensitive_keys,
+            sensitive_keys=self.config.sensitive_keys,
             mask_value_fn=self._mask_value,
             mask_text_fn=self._mask_slow_path
         )
