@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Union
 
-# Fix #18: Use Union instead of constrained TypeVar for correct type semantics
+# Fix #14: Payload type alias — now applied to the abstract method signature
 Payload = Union[str, int, float, bool, None, dict, list]
 
 class MaskingEngine(ABC):
@@ -13,7 +13,7 @@ class MaskingEngine(ABC):
     """
     
     @abstractmethod
-    def mask(self, payload: Any) -> Any:
+    def mask(self, payload: Payload) -> Payload:
         """
         Recursively process a payload (String, Dictionary, or List)
         and securely blind all matched sensitive nodes.

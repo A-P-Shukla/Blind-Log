@@ -14,24 +14,27 @@ def walk_and_mask(
     Implements DFS with cycle detection to prevent infinite recursion on self-referencing objects.
     
     Hybrid Strategy:
-    - Fast Path: If key in sensitive_keys, masks the entire value using mask_value_fn.
+    - Fast Path: If key exactly matches or ends with a sensitive key suffix, mask value.
     - Slow Path: If string value, scans using regex via mask_text_fn.
     """
     if visited is None:
         visited = set()
 
-    # Fix #2: Separate base cases with correct operator precedence
-    # Fix #10: Remove duplicate dead `if data is None` check
+    # Fix #2 + #12: Separate base cases with type-prefixed masking for None/bool
     if data is None:
         if force_mask:
-            return mask_value_fn("None")
+            return mask_value_fn("__NoneType__:None")
         return data
 
-    if isinstance(data, (int, float, bool)) and not force_mask:
+    if isinstance(data, bool) and not force_mask:
+        return data
+    if isinstance(data, bool) and force_mask:
+        return mask_value_fn(f"__bool__:{data}")
+
+    if isinstance(data, (int, float)) and not force_mask:
         return data
 
     # Cycle detection
-    # Note: id() is used because dictionaries/lists are unhashable
     obj_id = id(data)
     if obj_id in visited:
         return "<CircularReference>"
@@ -43,18 +46,26 @@ def walk_and_mask(
         for k, v in data.items():
             k_lower = str(k).lower()
             
-            # Fix #13: Exact key matching instead of substring to prevent false positives
-            # e.g. "email_verified" no longer matches "email"
-            if force_mask or k_lower in sensitive_keys:
+            # Fix #1: Suffix matching — catches refresh_token, old_password, x_api_key
+            # while still rejecting token_count, email_verified
+            is_sensitive = (
+                force_mask
+                or k_lower in sensitive_keys
+                or any(k_lower.endswith("_" + s) or k_lower.endswith("-" + s) for s in sensitive_keys)
+            )
+            
+            if is_sensitive:
                 if isinstance(v, str):
                     masked_dict[k] = mask_value_fn(v)
                 elif isinstance(v, (int, float)):
                     masked_dict[k] = mask_value_fn(str(v))
+                elif isinstance(v, bool):
+                    masked_dict[k] = mask_value_fn(f"__bool__:{v}")
+                elif v is None:
+                    masked_dict[k] = mask_value_fn("__NoneType__:None")
                 else:
-                    # It's a nested object under a sensitive key; traverse it enforcing masking on all scalar leaves
                     masked_dict[k] = walk_and_mask(v, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=True)
             else:
-                # Recurse normally
                 masked_dict[k] = walk_and_mask(v, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=False)
                 
         visited.remove(obj_id)
@@ -64,18 +75,28 @@ def walk_and_mask(
         masked_list = [walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=force_mask) for item in data]
         visited.remove(obj_id)
         return masked_list
+
+    # Fix #6: Handle bytes type
+    elif isinstance(data, bytes):
+        try:
+            decoded = data.decode('utf-8', errors='ignore')
+            result = mask_value_fn(decoded) if force_mask else mask_text_fn(decoded)
+            visited.remove(obj_id)
+            return result
+        except Exception:
+            visited.remove(obj_id)
+            return data
         
     elif isinstance(data, str):
         if force_mask:
             result = mask_value_fn(data)
         else:
-            # Slow Path: Escaped or embedded PII inside a generic text block
             result = mask_text_fn(data)
         visited.remove(obj_id)
         return result
 
     # Fallback for primitive types forced to be masked
-    if force_mask and isinstance(data, (int, float, bool)):
+    if force_mask and isinstance(data, (int, float)):
         result = mask_value_fn(str(data))
         visited.remove(obj_id)
         return result
