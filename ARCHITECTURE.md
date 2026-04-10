@@ -27,8 +27,9 @@ All downstream plugins type-check against `MaskingEngine` (an Abstract Base Clas
 Rather than hardcoding `if/else` ladders, BlindLog's engine executes on an extensible **Registry Pattern**. Consumers can arbitrarily bind new `re.Pattern` objects and Custom Callbacks directly into `logger.registry.register()`, providing infinite extensibility. 
 
 BlindLog's internal discovery executes via a **Hybrid Recursive DFS Strategy**:
-- **Fast Path (Key-Based):** Strict schema matching. If a nested JSON key is matched (like `"credentials"`), the recursive walker utilizes `force_mask=True` to aggressively mask all deeply nested scalar elements perfectly without shattering the underlying physical dictionary schema.
+- **Fast Path (Key-Based):** Uses **exact match + suffix match** to detect sensitive keys. A field is masked if its name exactly matches a registered sensitive key (e.g. `"email"`, `"password"`) OR if it ends with `_<sensitive_key>` or `-<sensitive_key>` (e.g. `"refresh_token"`, `"old_password"`, `"x_api_key"`). This catches real-world compound OAuth2/auth field names while avoiding false positives on unrelated fields like `"token_count"` or `"email_verified"`.
 - **Slow Path (Value-Based):** Scans arbitrary string logs using registered regex rules. Limit-locked to 10,000 characters to avert CPU-exhaustion (ReDoS) scaling attacks.
+- **Idempotency:** `mask()` is safe to call multiple times on the same data. Values already carrying BlindLog sentinel prefixes (`ref_`, `blind:`, `ip_`, `key_`) are skipped automatically.
 
 ### Layer 3: The Transformation Layer (Structure-Preserving Masking)
 Logging aggregators (Elasticsearch, Datadog) crash if strict schemas are compromised. If an `email` field receives a raw 64-char hash, ingestion pipelines break. BlindLog replaces the target strings physically preserving their structure:
@@ -38,6 +39,9 @@ Logging aggregators (Elasticsearch, Datadog) crash if strict schemas are comprom
 ### Layer 4: The Deep Transport Layer (Pure ASGI Middleware)
 While v1 scaffolded standard Starlette interception, v1.1 implements a hardened **Pure ASGI Middleware**.
 By executing directly within the standard ASGI `__call__` interface, BlindLog isolates physical Byte streams perfectly:
-1. Validates `Content-Length` headers, shedding massive payloads (> 5MB) dynamically to avert Out-Of-Memory (OOM) Denial of Service.
+1. Validates `Content-Length` headers, shedding massive payloads (> 5MB) dynamically to avert Out-Of-Memory (OOM) Denial of Service — on both request and response bodies.
 2. Ingests and inspects the HTTP payloads securely.
 3. Repackages ASGI signals perfectly preventing the tearing of underlying async topologies like WebSockets, Server-Sent Events, or native FastAPI generators.
+
+> **Known Limitation:** For streaming responses (SSE, chunked transfer), PII values split across multiple body chunks cannot be detected by chunk-by-chunk regex inspection. For full coverage of streaming responses, consider buffering the entire response at the application level or using endpoint-specific masking.
+
