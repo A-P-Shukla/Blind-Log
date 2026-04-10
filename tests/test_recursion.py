@@ -80,3 +80,34 @@ def test_mutable_singleton_isolation():
     cfg1.sensitive_keys.add("custom_field")
     assert "custom_field" not in cfg2.sensitive_keys
     assert "custom_field" not in DEFAULT_SENSITIVE_KEYS
+
+def test_suffix_matching_compound_keys():
+    """Round 2 #1: Compound keys like refresh_token, old_password must be masked."""
+    logger = BlindLogger(secret_key="secret")
+    result = logger.mask({
+        "refresh_token": "eyJhbGciOiJIUzI1NiJ9",
+        "access_token": "eyJhbGciOiJIUzI1NiJ9",
+        "old_password": "plaintext123",
+        "new_password": "newplaintext",
+        "x_api_key": "some-key-value",
+        "token_count": 42,
+        "email_verified": True,
+    })
+    # Compound sensitive keys MUST be masked
+    assert "eyJhbGciOiJIUzI1NiJ9" not in str(result["refresh_token"])
+    assert "eyJhbGciOiJIUzI1NiJ9" not in str(result["access_token"])
+    assert "plaintext123" not in str(result["old_password"])
+    assert "newplaintext" not in str(result["new_password"])
+    assert "some-key-value" not in str(result["x_api_key"])
+    # Non-sensitive compound keys must NOT be masked
+    assert result["token_count"] == 42
+    assert result["email_verified"] == True
+
+def test_idempotent_masking():
+    """Round 2 #7: Calling mask() twice should produce the same result."""
+    logger = BlindLogger(secret_key="secret")
+    payload = {"message": "user@example.com logged in"}
+    r1 = logger.mask(payload)
+    r2 = logger.mask(r1)
+    assert r1 == r2
+
