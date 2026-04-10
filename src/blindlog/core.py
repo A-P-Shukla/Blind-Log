@@ -7,7 +7,8 @@ from blindlog.config import BlindLogConfig
 from blindlog.registry import RuleRegistry
 from blindlog.interfaces import MaskingEngine
 
-logger = logging.getLogger("blindlog.core")
+# Fix #16: Rename to _log to avoid leaking as public symbol
+_log = logging.getLogger("blindlog.core")
 
 class BlindLogger(MaskingEngine):
     """
@@ -24,7 +25,6 @@ class BlindLogger(MaskingEngine):
         """
         self.config = config if config else BlindLogConfig(**kwargs)
         
-        # Fix #5: Register ALL defined regex rules, not just email and CC
         self.registry = RuleRegistry()
         self.registry.register(EMAIL_REGEX, self._mask_email)
         self.registry.register(CREDIT_CARD_REGEX, self._mask_cc)
@@ -36,7 +36,6 @@ class BlindLogger(MaskingEngine):
         Generates a deterministic BLAKE2b hash.
         Utilizes native cryptographic length scaling (digest_size).
         """
-        # Fix #7: Guard against invalid length
         if length < 1:
             raise ValueError(f"BlindLog: hash length must be >= 1, got {length}")
 
@@ -46,7 +45,6 @@ class BlindLogger(MaskingEngine):
         digest_bytes = max(1, (length + 1) // 2)
         h = hashlib.blake2b(value.encode('utf-8'), key=self.config.blake_key, digest_size=digest_bytes)
         
-        # Slicing is still applied in case 'length' requested is odd (e.g. 5 bytes -> 10 hex chars string, etc)
         return h.hexdigest()[:length]
 
     def _mask_email(self, email: str) -> str:
@@ -56,7 +54,6 @@ class BlindLogger(MaskingEngine):
             hash_val = self._hash(email, length=12)
             return f"ref_{hash_val}...@masked.com"
         except ValueError:
-            # Fix #6: Consistent format even when input has no '@'
             return f"ref_{self._hash(email)}...@masked.com"
 
     def _mask_cc(self, cc: str) -> str:
@@ -66,7 +63,6 @@ class BlindLogger(MaskingEngine):
             first_4 = clean_cc[:4]
             last_4 = clean_cc[-4:]
             hash_val = self._hash(clean_cc, length=12)
-            # Use 12 hex digits in the middle to maintain high entropy
             return f"{first_4}-{hash_val[:6]}-{hash_val[6:12]}-{last_4}"
         return self._hash(cc)
 
