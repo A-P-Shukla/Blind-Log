@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Set, Callable
-import copy
+from blindlog.rules import normalize_key
 
 def walk_and_mask(
     data: Any, 
@@ -14,22 +14,22 @@ def walk_and_mask(
     Implements DFS with cycle detection to prevent infinite recursion on self-referencing objects.
     
     Hybrid Strategy:
-    - Fast Path: If key exactly matches or ends with a sensitive key suffix, mask value.
+    - Fast Path: If key matches (exact, suffix with _/-./ delimiters, or camelCase normalized), mask value.
     - Slow Path: If string value, scans using regex via mask_text_fn.
     """
     if visited is None:
         visited = set()
 
-    # Fix #2 + #12: Separate base cases with type-prefixed masking for None/bool
+    # Fix #6: Use null byte sentinel for type-prefixed masking (cannot appear in JSON)
     if data is None:
         if force_mask:
-            return mask_value_fn("__NoneType__:None")
+            return mask_value_fn("\x00NoneType\x00")
         return data
 
     if isinstance(data, bool) and not force_mask:
         return data
     if isinstance(data, bool) and force_mask:
-        return mask_value_fn(f"__bool__:{data}")
+        return mask_value_fn(f"\x00bool\x00{data}")
 
     if isinstance(data, (int, float)) and not force_mask:
         return data
@@ -44,14 +44,19 @@ def walk_and_mask(
     if isinstance(data, dict):
         masked_dict = {}
         for k, v in data.items():
-            k_lower = str(k).lower()
+            # Fix #3 + #4: Normalize camelCase to snake_case before matching
+            k_normalized = normalize_key(str(k))
             
-            # Fix #1: Suffix matching — catches refresh_token, old_password, x_api_key
-            # while still rejecting token_count, email_verified
+            # Exact match, suffix match (with _, -, . delimiters)
             is_sensitive = (
                 force_mask
-                or k_lower in sensitive_keys
-                or any(k_lower.endswith("_" + s) or k_lower.endswith("-" + s) for s in sensitive_keys)
+                or k_normalized in sensitive_keys
+                or any(
+                    k_normalized.endswith("_" + s) 
+                    or k_normalized.endswith("-" + s) 
+                    or k_normalized.endswith("." + s)
+                    for s in sensitive_keys
+                )
             )
             
             if is_sensitive:
@@ -60,9 +65,9 @@ def walk_and_mask(
                 elif isinstance(v, (int, float)):
                     masked_dict[k] = mask_value_fn(str(v))
                 elif isinstance(v, bool):
-                    masked_dict[k] = mask_value_fn(f"__bool__:{v}")
+                    masked_dict[k] = mask_value_fn(f"\x00bool\x00{v}")
                 elif v is None:
-                    masked_dict[k] = mask_value_fn("__NoneType__:None")
+                    masked_dict[k] = mask_value_fn("\x00NoneType\x00")
                 else:
                     masked_dict[k] = walk_and_mask(v, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=True)
             else:
@@ -76,7 +81,6 @@ def walk_and_mask(
         visited.remove(obj_id)
         return masked_list
 
-    # Fix #6: Handle bytes type
     elif isinstance(data, bytes):
         try:
             decoded = data.decode('utf-8', errors='ignore')

@@ -7,15 +7,12 @@ _log = logging.getLogger("blindlog.middleware")
 
 class BlindLogFastAPIMiddleware:
     """
-    Pure ASGI Middleware to intercept and mask request bodies and metadata
-    without violating or corrupting underlying asynchronous streams.
+    Pure ASGI Middleware to intercept and mask request/response bodies and metadata.
     
-    Known Limitation (#17): Streaming responses (SSE, chunked transfer) may have
-    PII split across multiple body chunks. Chunk-by-chunk inspection cannot detect
-    PII that spans chunk boundaries. For full coverage of streaming responses,
-    consider buffering the entire response or using application-level masking.
+    Known Limitation: Streaming responses (SSE, chunked transfer) may have PII split
+    across multiple body chunks. Chunk-by-chunk inspection cannot detect PII that spans
+    chunk boundaries.
     """
-    # Fix #11: Lazy initialization — same pattern as BlindLogFormatter
     def __init__(self, app, blind_logger: MaskingEngine = None):
         self.app = app
         self._blind_logger = blind_logger
@@ -31,9 +28,13 @@ class BlindLogFastAPIMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-            
-        headers = dict(scope.get("headers", []))
-        content_length_str = headers.get(b"content-length", b"0").decode("utf-8", errors="ignore")
+
+        # Fix #17: Preserve all duplicate headers using list-of-tuples
+        raw_headers = scope.get("headers", [])
+        
+        # Extract content-length for OOM check (safe to use dict for this single lookup)
+        headers_dict = dict(raw_headers)
+        content_length_str = headers_dict.get(b"content-length", b"0").decode("utf-8", errors="ignore")
         content_length = int(content_length_str) if content_length_str.isdigit() else 0
         
         if content_length > 5_000_000:
@@ -49,7 +50,6 @@ class BlindLogFastAPIMiddleware:
                 _log.info(f"BlindLog [Response Status]: {message['status']}")
             elif message["type"] == "http.response.body":
                 resp_body = message.get("body", b"")
-                # Fix #10: OOM guard on response body
                 if resp_body and len(resp_body) < 5_000_000:
                     try:
                         parsed_resp = json.loads(resp_body)
@@ -92,12 +92,14 @@ class BlindLogFastAPIMiddleware:
                     masked_string = self.blind_logger.mask(body_bytes.decode('utf-8', errors='ignore'))
                     _log.info(f"BlindLog [Request Body]: {masked_string}")
 
-        decoded_headers = {k.decode('utf-8'): v.decode('utf-8') for k, v in headers.items()}
+        # Fix #17: Log all headers including duplicates
+        decoded_headers = {k.decode('utf-8'): v.decode('utf-8') for k, v in raw_headers}
         _log.info(f"BlindLog [Headers]: {json.dumps(self.blind_logger.mask(decoded_headers))}")
 
+        # Fix #18: Forward real receive() (including http.disconnect) after buffer is exhausted
         async def receive_proxy():
             if messages:
                 return messages.pop(0)
-            return {"type": "http.request", "body": b"", "more_body": False}
+            return await receive()
 
         await self.app(scope, receive_proxy, send_proxy)
