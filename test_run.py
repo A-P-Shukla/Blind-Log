@@ -1,8 +1,8 @@
 import os
 import sys
 
-# Add src to python path for testing
-sys.path.insert(0, os.path.abspath("src"))
+# Fix #19: Use script-relative path, not CWD-relative
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from blindlog import BlindLogger
 
