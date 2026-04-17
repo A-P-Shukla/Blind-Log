@@ -1,13 +1,12 @@
 import hashlib
 import logging
 from typing import Any, Dict, List, Optional
-from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX, IPV4_REGEX, API_KEY_REGEX
+from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX, IPV4_REGEX, API_KEY_REGEX, PHONE_REGEX
 from blindlog.utils import walk_and_mask
 from blindlog.config import BlindLogConfig
 from blindlog.registry import RuleRegistry
-from blindlog.interfaces import MaskingEngine
+from blindlog.interfaces import MaskingEngine, Payload
 
-# Fix #16: Rename to _log to avoid leaking as public symbol
 _log = logging.getLogger("blindlog.core")
 
 class BlindLogger(MaskingEngine):
@@ -19,23 +18,17 @@ class BlindLogger(MaskingEngine):
         config: Optional[BlindLogConfig] = None,
         **kwargs
     ):
-        """
-        Initializes the BlindLogger engine. Accepts a formal `BlindLogConfig` object.
-        For ease of use and backwards compatibility, also accepts raw config kwargs to hydrate dynamically.
-        """
         self.config = config if config else BlindLogConfig(**kwargs)
         
-        self.registry = RuleRegistry()
+        # Fix #1: Pass keyed hash fn to registry for secure fallbacks
+        self.registry = RuleRegistry(keyed_hash_fn=lambda v: f"blind:{self._hash(v, length=10)}")
         self.registry.register(EMAIL_REGEX, self._mask_email)
         self.registry.register(CREDIT_CARD_REGEX, self._mask_cc)
-        self.registry.register(IPV4_REGEX, lambda v: f"ip_{self._hash(v, length=10)}")
-        self.registry.register(API_KEY_REGEX, lambda v: f"key_{self._hash(v, length=10)}")
+        self.registry.register(IPV4_REGEX, lambda v: f"blnd_ip_{self._hash(v, length=10)}")
+        self.registry.register(API_KEY_REGEX, lambda v: f"blnd_key_{self._hash(v, length=10)}")
+        self.registry.register(PHONE_REGEX, lambda v: f"blnd_ph_{self._hash(v, length=10)}")
         
     def _hash(self, value: str, length: int = 12) -> str:
-        """
-        Generates a deterministic BLAKE2b hash.
-        Utilizes native cryptographic length scaling (digest_size).
-        """
         if length < 1:
             raise ValueError(f"BlindLog: hash length must be >= 1, got {length}")
 
@@ -48,13 +41,14 @@ class BlindLogger(MaskingEngine):
         return h.hexdigest()[:length]
 
     def _mask_email(self, email: str) -> str:
-        """Structure-preserving mask for emails: ref_HASH...@masked.com"""
+        """Structure-preserving mask for emails: blnd_ref_HASH...@masked.com"""
         try:
             local, domain = email.rsplit('@', 1)
             hash_val = self._hash(email, length=12)
-            return f"ref_{hash_val}...@masked.com"
+            # Fix #13: Use collision-resistant sentinel prefix
+            return f"blnd_ref_{hash_val}...@masked.com"
         except ValueError:
-            return f"ref_{self._hash(email)}...@masked.com"
+            return f"blnd_ref_{self._hash(email)}...@masked.com"
 
     def _mask_cc(self, cc: str) -> str:
         """Structure-preserving mask for credit cards: 4111-abcdef-abcdef-1234"""
@@ -67,10 +61,6 @@ class BlindLogger(MaskingEngine):
         return self._hash(cc)
 
     def _mask_value(self, value: str) -> str:
-        """
-        The hybrid evaluation for a single string value.
-        Delegates strictly to the generic extensible RuleRegistry.
-        """
         if len(value) > 10000:
             return "<Skipped due to length: ReDoS Protection>"
             
@@ -78,19 +68,14 @@ class BlindLogger(MaskingEngine):
         return self.registry.process_value(value, fallback_hash)
 
     def _mask_slow_path(self, text: str) -> str:
-        """
-        Slow path: scans arbitrary text for embedded PII.
-        Limits evaluation to 10,000 characters to prevent ReDoS.
-        """
         if len(text) > 10000:
             return "<Skipped due to length: ReDoS Protection>"
             
         return self.registry.process_text(text)
 
-    def mask(self, payload: Any) -> Any:
-        """
-        Public endpoint to mask a payload.
-        """
+    # Fix #14: Match the Payload type annotation from the abstract contract
+    def mask(self, payload: Payload) -> Payload:
+        """Public endpoint to mask a payload."""
         if self.config.debug_mode:
             return payload
             
