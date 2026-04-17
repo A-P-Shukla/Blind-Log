@@ -7,7 +7,6 @@ from blindlog.integrations.fastapi import BlindLogFastAPIMiddleware
 
 app = FastAPI()
 
-# Add the middleware
 blind_logger = BlindLogger(secret_key="test-api-secret")
 app.add_middleware(BlindLogFastAPIMiddleware, blind_logger=blind_logger)
 
@@ -18,18 +17,15 @@ async def submit_data(request: Request):
 
 client = TestClient(app)
 
-# Fix #2: Replace capsys with caplog to capture logging output
 def test_fastapi_middleware_passes_data_correctly(caplog):
     payload = {"email": "user@gmail.com", "other": "data"}
     
     with caplog.at_level(logging.INFO, logger="blindlog.middleware"):
         response = client.post("/submit", json=payload)
     
-    # Ensure downstream route received the correct UNMASKED bytes
     assert response.status_code == 200
     assert response.json()["received_email"] == "user@gmail.com"
     
-    # Ensure logging output from middleware masked the body
     assert "BlindLog [Request Body]" in caplog.text
     assert "user@gmail.com" not in caplog.text
-    assert "ref_" in caplog.text
+    assert "blnd_ref_" in caplog.text
