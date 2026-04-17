@@ -1,6 +1,5 @@
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Optional
 import re
-import hashlib
 import logging
 
 _log = logging.getLogger("blindlog.registry")
@@ -12,9 +11,10 @@ class RuleRegistry:
     Extensible configuration registry supporting mapping of deterministic 
     cryptographic functions to custom user-provided Regex patterns.
     """
-    def __init__(self):
+    # Fix #1: Accept a keyed hash function for secure fallbacks
+    def __init__(self, keyed_hash_fn: Optional[MaskCallback] = None):
         self._rules: List[Tuple[re.Pattern, MaskCallback]] = []
-        # Fix #7: Import sentinel prefixes for idempotency checks
+        self._keyed_hash_fn = keyed_hash_fn
         from blindlog.rules import MASKED_PREFIXES
         self._masked_prefixes = MASKED_PREFIXES
         
@@ -23,15 +23,23 @@ class RuleRegistry:
         self._rules.append((pattern, callback))
 
     def _is_already_masked(self, value: str) -> bool:
-        """Fix #7: Check if a value has already been masked to ensure idempotency."""
+        """Check if a value has already been masked to ensure idempotency."""
         return any(value.startswith(prefix) for prefix in self._masked_prefixes)
+
+    def _secure_fallback(self, value: str) -> str:
+        """Produce a keyed fallback hash. Falls back to unkeyed only if no key fn provided."""
+        if self._keyed_hash_fn:
+            return self._keyed_hash_fn(value)
+        # Last resort — should not happen in normal operation
+        import hashlib
+        _log.warning("BlindLog: Using unkeyed fallback hash — keyed_hash_fn not configured.")
+        return f"blind:{hashlib.blake2b(value.encode(), digest_size=5).hexdigest()}"
         
     def process_value(self, value: str, fallback_callback: MaskCallback) -> str:
         """
         Executes strict Format Preserving matching. Escapes early if matched.
         Wraps callbacks in try/except. Skips already-masked values.
         """
-        # Fix #7: Idempotency — skip already-masked values
         if self._is_already_masked(value):
             return value
 
@@ -47,20 +55,18 @@ class RuleRegistry:
     def process_text(self, text: str) -> str:
         """
         Cumulatively masks all recognized embedded objects within a standard string block.
-        Fix #5: On callback failure, apply a fallback hash instead of returning original PII.
-        Fix #7: Skip already-masked values.
+        On callback failure, applies a keyed fallback hash instead of returning original PII.
         """
         for pattern, callback in self._rules:
             def safe_sub(match, cb=callback):
                 matched = match.group(0)
-                # Fix #7: Skip already-masked tokens
                 if self._is_already_masked(matched):
                     return matched
                 try:
                     return cb(matched)
                 except Exception as e:
-                    _log.warning(f"BlindLog: Callback failed during text scan: {e}. Applying fallback hash.")
-                    # Fix #5: Fallback hash instead of returning original PII
-                    return f"blind:{hashlib.blake2b(matched.encode(), digest_size=5).hexdigest()}"
+                    _log.warning(f"BlindLog: Callback failed during text scan: {e}. Applying keyed fallback.")
+                    # Fix #1: Use keyed hash function for secure fallback
+                    return self._secure_fallback(matched)
             text = pattern.sub(safe_sub, text)
         return text

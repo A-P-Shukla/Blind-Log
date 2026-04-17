@@ -38,9 +38,9 @@ class BlindLogFormatter(logging.Formatter):
                                   for arg in args_copy)
                 record_copy.args = masked_args
         except Exception as e:
-            # Fix #3: Log an error instead of silently passing PII through
-            _log.error(
-                "BlindLog: Masking failed, log record emitted UNMASKED. Reason: %s", e
-            )
+            _log.error("BlindLog: Masking failed. Reason: %s", e)
+            # Fix #2: Suppress the original record to prevent PII leaking
+            record_copy.msg = "[BLINDLOG MASKING FAILED - RECORD SUPPRESSED]"
+            record_copy.args = None
             
         return super().format(record_copy)
