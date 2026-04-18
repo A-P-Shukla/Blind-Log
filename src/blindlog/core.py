@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from typing import Any, Dict, List, Optional
-from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX, IPV4_REGEX, API_KEY_REGEX, PHONE_REGEX
+from blindlog.rules import EMAIL_REGEX, CREDIT_CARD_REGEX, IPV4_REGEX, API_KEY_REGEX, PHONE_REGEX, SSN_REGEX
 from blindlog.utils import walk_and_mask
 from blindlog.config import BlindLogConfig
 from blindlog.registry import RuleRegistry
@@ -20,13 +20,13 @@ class BlindLogger(MaskingEngine):
     ):
         self.config = config if config else BlindLogConfig(**kwargs)
         
-        # Fix #1: Pass keyed hash fn to registry for secure fallbacks
         self.registry = RuleRegistry(keyed_hash_fn=lambda v: f"blind:{self._hash(v, length=10)}")
         self.registry.register(EMAIL_REGEX, self._mask_email)
         self.registry.register(CREDIT_CARD_REGEX, self._mask_cc)
         self.registry.register(IPV4_REGEX, lambda v: f"blnd_ip_{self._hash(v, length=10)}")
         self.registry.register(API_KEY_REGEX, lambda v: f"blnd_key_{self._hash(v, length=10)}")
         self.registry.register(PHONE_REGEX, lambda v: f"blnd_ph_{self._hash(v, length=10)}")
+        self.registry.register(SSN_REGEX, lambda v: f"blnd_ssn_{self._hash(v, length=10)}")
         
     def _hash(self, value: str, length: int = 12) -> str:
         if length < 1:
@@ -45,7 +45,6 @@ class BlindLogger(MaskingEngine):
         try:
             local, domain = email.rsplit('@', 1)
             hash_val = self._hash(email, length=12)
-            # Fix #13: Use collision-resistant sentinel prefix
             return f"blnd_ref_{hash_val}...@masked.com"
         except ValueError:
             return f"blnd_ref_{self._hash(email)}...@masked.com"
@@ -73,7 +72,6 @@ class BlindLogger(MaskingEngine):
             
         return self.registry.process_text(text)
 
-    # Fix #14: Match the Payload type annotation from the abstract contract
     def mask(self, payload: Payload) -> Payload:
         """Public endpoint to mask a payload."""
         if self.config.debug_mode:

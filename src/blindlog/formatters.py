@@ -27,20 +27,39 @@ class BlindLogFormatter(logging.Formatter):
         record_copy = copy.copy(record)
         
         try:
+            # Mask the message body
             if isinstance(record_copy.msg, (dict, list)):
                 record_copy.msg = self.blind_logger.mask(copy.deepcopy(record_copy.msg))
             elif isinstance(record_copy.msg, str):
                 record_copy.msg = self.blind_logger.mask(record_copy.msg)
                 
+            # Fix #1: Handle both tuple and dict-style log args
             if record_copy.args:
                 args_copy = copy.deepcopy(record_copy.args)
-                masked_args = tuple(self.blind_logger.mask(arg) if isinstance(arg, (str, dict, list)) else arg 
-                                  for arg in args_copy)
-                record_copy.args = masked_args
+                if isinstance(args_copy, dict):
+                    # Mapping style: logger.info("%(name)s logged in", {"name": "user@example.com"})
+                    record_copy.args = {
+                        k: self.blind_logger.mask(v) if isinstance(v, (str, dict, list)) else v
+                        for k, v in args_copy.items()
+                    }
+                elif isinstance(args_copy, tuple):
+                    # Positional style: logger.info("Hello %s", "user@example.com")
+                    record_copy.args = tuple(
+                        self.blind_logger.mask(arg) if isinstance(arg, (str, dict, list)) else arg
+                        for arg in args_copy
+                    )
+
+            # Fix #2: Mask exception info to prevent PII leaks in stack traces
+            if record_copy.exc_info and record_copy.exc_info[0] is not None:
+                exc_text = self.formatException(record_copy.exc_info)
+                record_copy.exc_text = self.blind_logger.mask(exc_text)
+                record_copy.exc_info = None  # Prevent super() from re-formatting unmasked
+
         except Exception as e:
             _log.error("BlindLog: Masking failed. Reason: %s", e)
-            # Fix #2: Suppress the original record to prevent PII leaking
             record_copy.msg = "[BLINDLOG MASKING FAILED - RECORD SUPPRESSED]"
             record_copy.args = None
+            record_copy.exc_info = None
+            record_copy.exc_text = None
             
         return super().format(record_copy)
