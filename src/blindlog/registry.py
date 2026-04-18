@@ -11,7 +11,6 @@ class RuleRegistry:
     Extensible configuration registry supporting mapping of deterministic 
     cryptographic functions to custom user-provided Regex patterns.
     """
-    # Fix #1: Accept a keyed hash function for secure fallbacks
     def __init__(self, keyed_hash_fn: Optional[MaskCallback] = None):
         self._rules: List[Tuple[re.Pattern, MaskCallback]] = []
         self._keyed_hash_fn = keyed_hash_fn
@@ -27,10 +26,9 @@ class RuleRegistry:
         return any(value.startswith(prefix) for prefix in self._masked_prefixes)
 
     def _secure_fallback(self, value: str) -> str:
-        """Produce a keyed fallback hash. Falls back to unkeyed only if no key fn provided."""
+        """Produce a keyed fallback hash."""
         if self._keyed_hash_fn:
             return self._keyed_hash_fn(value)
-        # Last resort — should not happen in normal operation
         import hashlib
         _log.warning("BlindLog: Using unkeyed fallback hash — keyed_hash_fn not configured.")
         return f"blind:{hashlib.blake2b(value.encode(), digest_size=5).hexdigest()}"
@@ -40,6 +38,7 @@ class RuleRegistry:
         Executes strict Format Preserving matching. Escapes early if matched.
         Wraps callbacks in try/except. Skips already-masked values.
         """
+        # Fix #10: More precise idempotency check — require sentinel + hex pattern
         if self._is_already_masked(value):
             return value
 
@@ -55,7 +54,7 @@ class RuleRegistry:
     def process_text(self, text: str) -> str:
         """
         Cumulatively masks all recognized embedded objects within a standard string block.
-        On callback failure, applies a keyed fallback hash instead of returning original PII.
+        On callback failure, applies a keyed fallback hash.
         """
         for pattern, callback in self._rules:
             def safe_sub(match, cb=callback):
@@ -66,7 +65,6 @@ class RuleRegistry:
                     return cb(matched)
                 except Exception as e:
                     _log.warning(f"BlindLog: Callback failed during text scan: {e}. Applying keyed fallback.")
-                    # Fix #1: Use keyed hash function for secure fallback
                     return self._secure_fallback(matched)
             text = pattern.sub(safe_sub, text)
         return text

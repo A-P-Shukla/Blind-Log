@@ -29,10 +29,9 @@ class BlindLogFastAPIMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        # Fix #17: Preserve all duplicate headers using list-of-tuples
         raw_headers = scope.get("headers", [])
         
-        # Extract content-length for OOM check (safe to use dict for this single lookup)
+        # Extract content-length for OOM check
         headers_dict = dict(raw_headers)
         content_length_str = headers_dict.get(b"content-length", b"0").decode("utf-8", errors="ignore")
         content_length = int(content_length_str) if content_length_str.isdigit() else 0
@@ -92,11 +91,20 @@ class BlindLogFastAPIMiddleware:
                     masked_string = self.blind_logger.mask(body_bytes.decode('utf-8', errors='ignore'))
                     _log.info(f"BlindLog [Request Body]: {masked_string}")
 
-        # Fix #17: Log all headers including duplicates
-        decoded_headers = {k.decode('utf-8'): v.decode('utf-8') for k, v in raw_headers}
-        _log.info(f"BlindLog [Headers]: {json.dumps(self.blind_logger.mask(decoded_headers))}")
+        # Fix #8: Use list-of-tuples to preserve duplicate headers
+        # Fix #9: Use errors='replace' for non-UTF-8 header values
+        decoded_headers = [
+            (k.decode('utf-8', errors='replace'), v.decode('utf-8', errors='replace'))
+            for k, v in raw_headers
+        ]
+        # Mask each header value individually, log as list of pairs
+        masked_headers = [
+            (k, self.blind_logger.mask(v) if isinstance(v, str) else v)
+            for k, v in decoded_headers
+        ]
+        _log.info(f"BlindLog [Headers]: {json.dumps(masked_headers)}")
 
-        # Fix #18: Forward real receive() (including http.disconnect) after buffer is exhausted
+        # Forward real receive() (including http.disconnect) after buffer is exhausted
         async def receive_proxy():
             if messages:
                 return messages.pop(0)
