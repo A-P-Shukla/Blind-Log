@@ -14,8 +14,6 @@ class RuleRegistry:
     def __init__(self, keyed_hash_fn: Optional[MaskCallback] = None):
         self._rules: List[Tuple[re.Pattern, MaskCallback]] = []
         self._keyed_hash_fn = keyed_hash_fn
-        from blindlog.rules import MASKED_PREFIXES
-        self._masked_prefixes = MASKED_PREFIXES
         
     def register(self, pattern: re.Pattern, callback: MaskCallback):
         """Registers a customized fallback regex structure."""
@@ -23,7 +21,8 @@ class RuleRegistry:
 
     def _is_already_masked(self, value: str) -> bool:
         """Check if a value has already been masked to ensure idempotency."""
-        return any(value.startswith(prefix) for prefix in self._masked_prefixes)
+        from blindlog.rules import MASKED_PATTERN
+        return bool(MASKED_PATTERN.match(value))
 
     def _secure_fallback(self, value: str) -> str:
         """Produce a keyed fallback hash."""

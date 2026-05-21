@@ -44,6 +44,18 @@ SSN_REGEX = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
 # Collision-resistant sentinel prefixes for idempotency
 MASKED_PREFIXES = ("blnd_ref_", "blind:", "blnd_ip_", "blnd_key_", "blnd_ph_", "blnd_ssn_")
 
+# Strict idempotency validation pattern matching generated masks exactly
+MASKED_PATTERN = re.compile(
+    r'^('
+    r'blnd_ref_[0-9a-f]{12}\.\.\.@masked\.com'
+    r'|blind:[0-9a-f]{10}'
+    r'|blnd_ip_[0-9a-f]{10}'
+    r'|blnd_key_[0-9a-f]{10}'
+    r'|blnd_ph_[0-9a-f]{10}'
+    r'|blnd_ssn_[0-9a-f]{10}'
+    r')$'
+)
+
 # Fix #7: Removed generic 'key' — replaced with specific sensitive key variants
 # Fix #11: Removed 'cell' and 'telephone' — too many false positives (fuel_cell, etc.)
 # Fix #15: Added 'auth_code' for OAuth2 coverage

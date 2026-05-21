@@ -97,11 +97,14 @@ class BlindLogFastAPIMiddleware:
             (k.decode('utf-8', errors='replace'), v.decode('utf-8', errors='replace'))
             for k, v in raw_headers
         ]
-        # Mask each header value individually, log as list of pairs
-        masked_headers = [
-            (k, self.blind_logger.mask(v) if isinstance(v, str) else v)
-            for k, v in decoded_headers
-        ]
+        # Mask each header value individually using the key context, logging as list of pairs
+        masked_headers = []
+        for k, v in decoded_headers:
+            if isinstance(v, str):
+                masked_dict = self.blind_logger.mask({k: v})
+                masked_headers.append((k, masked_dict.get(k, v)))
+            else:
+                masked_headers.append((k, v))
         _log.info(f"BlindLog [Headers]: {json.dumps(masked_headers)}")
 
         # Forward real receive() (including http.disconnect) after buffer is exhausted

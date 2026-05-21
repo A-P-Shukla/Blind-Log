@@ -7,7 +7,7 @@ It solves the fundamental conflict in backend engineering: The developer needs t
 ## Overview
 
 Unlike legacy redaction that wipes out debugging context (e.g., `*****`), BlindLog uses natively-keyed **BLAKE2b cryptography** to consistently map data:
-- `akhand@gmail.com` always logs as `ref_8ax92bfa...@masked.com`. 
+- `akhand@gmail.com` always logs as `blnd_ref_8ax92bfac000...@masked.com`. 
 - You instantly know if the same user triggered 50 errors across microservices, while remaining legally compliant.
 
 ## Features
@@ -32,7 +32,7 @@ handler.setFormatter(BlindLogFormatter())
 logger.addHandler(handler)
 
 logger.info("Failed login for akhand@gmail.com on card 4111-2222-3333-4444")
-# Output: Failed login for ref_8a9df2c...@masked.com on card 4111-c918a2-f8b1c4-4444
+# Output: Failed login for blnd_ref_8a9df2c00000...@masked.com on card 4111-c918a2-f8b1c4-4444
 ```
 
 ### FastAPI Middleware
@@ -57,7 +57,8 @@ Because BlindLog v1.1 implements a Registry Pattern, you can add new maskers at 
 import re
 from blindlog.core import BlindLogger
 
-logger = BlindLogger()
+# Ensure BLINDLOG_SECRET is set in environment, or pass secret_key directly
+logger = BlindLogger(secret_key="my-secret-key")
 logger.registry.register(re.compile(r"AWS-KMS-\d{6}"), lambda text: "MASKED_AWS_TOKEN")
 ```
 
