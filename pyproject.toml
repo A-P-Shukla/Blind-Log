@@ -15,7 +15,7 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/A-P-Shukla/Blind-Log"
-Bug Tracker = "https://github.com/A-P-Shukla/Blind-Log/issues"
+"Bug Tracker" = "https://github.com/A-P-Shukla/Blind-Log/issues"
 
 [project.optional-dependencies]
 fastapi = ["fastapi", "starlette"]  # Users only install this if they need it
