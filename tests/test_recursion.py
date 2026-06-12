@@ -161,3 +161,20 @@ def test_no_key_false_positives():
     assert result["foreign_key"] == "order#456"
     assert result["sort_key"] == "profile#789"
     assert result["cache_key"] == "cache_123"
+
+def test_idempotent_sentinel_bypass_fix():
+    """Round 5 #3: Ensure prefix-only values like blind:my-secret are NOT bypassed."""
+    logger = BlindLogger(secret_key="secret")
+    
+    # 1. Under a sensitive key (force masking)
+    payload = {"api_key": "blind:my-secret-token"}
+    result = logger.mask(payload)
+    # The value should NOT be untouched. It must be masked into a proper valid mask.
+    assert result["api_key"] != "blind:my-secret-token"
+    
+    # 2. As free text containing a regex match
+    payload2 = {"message": "Email is blind:user@example.com"}
+    result2 = logger.mask(payload2)
+    # The email regex will match user@example.com and mask it, ignoring the 'blind:' part
+    assert "user@example.com" not in result2["message"]
+    assert "blind:blnd_ref_" in result2["message"]

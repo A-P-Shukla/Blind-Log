@@ -79,6 +79,8 @@ DEFAULT_SENSITIVE_KEYS = frozenset({
     "signing_key",
     "encryption_key",
     "ssn_number",
+    "cookie",
+    "set_cookie",
 })
 
 # Fix #4: Two-pass camelCase normalization for acronyms
@@ -97,4 +99,4 @@ def normalize_key(k: str) -> str:
     """
     k = _CAMEL_RE1.sub(r'\1_\2', k)
     k = _CAMEL_RE2.sub(r'\1_\2', k)
-    return k.lower()
+    return k.replace('-', '_').lower()
