@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.1.0] — 2026-04-18
+## [1.1.0] — 2026-06-12
 
 ### Breaking Changes
 
@@ -50,6 +50,9 @@ All notable changes to this project will be documented in this file.
 - `warnings.warn` stacklevel corrected to point at user call site
 - Hardcoded Windows paths replaced with `os.path.dirname(__file__)`
 - `pyproject.toml` `pythonpath` configured for pytest
+- **Security:** Hardened idempotency sentinels to use strict mathematical regex (`MASKED_PATTERN`), preventing bypass vectors via manual `blind:` prefixes.
+- **Security:** Middleware header interceptor now wraps contexts dicts (e.g., `{"Cookie": "..."}`), successfully masking standalone HTTP headers.
+- **Security:** Added `cookie` and `set_cookie` natively to `DEFAULT_SENSITIVE_KEYS` and forced `-` to `_` normalizations to protect common web auth streams natively.
 
 ## [0.1.0] — 2026-04-08
 
