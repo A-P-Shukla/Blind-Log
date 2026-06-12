@@ -1,5 +1,7 @@
 # BlindLog v1.1 Architecture
 
+**Repository:** [https://github.com/A-P-Shukla/Blind-Log](https://github.com/A-P-Shukla/Blind-Log)
+
 Bridging the gap between "hiding text" and true **Privacy-Preserving Observability**.
 
 ## 1. The Core Philosophy: Deterministic Pseudonymization

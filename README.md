@@ -1,6 +1,8 @@
 # BlindLog v1.1
 
-BlindLog is a **zero-dependency, production-ready Privacy-Preserving Observability SDK** for Python. 
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-181717.svg?style=for-the-badge&logo=github)](https://github.com/A-P-Shukla/Blind-Log)
+
+BlindLog is a **zero-dependency, production-ready Privacy-Preserving Observability SDK** for Python.
 
 It solves the fundamental conflict in backend engineering: The developer needs to see everything to fix bugs, but compliance constraints (GDPR/HIPAA/SOC2) dictate that you cannot see anything personal. 
 
