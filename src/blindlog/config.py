@@ -1,9 +1,14 @@
 import os
+import re
 import warnings
 import hashlib
 from dataclasses import dataclass, field
-from typing import FrozenSet, Optional
+from typing import FrozenSet
 from blindlog.rules import DEFAULT_SENSITIVE_KEYS
+
+# key_id appears in mask prefixes (blnd_{key_id}_ref_...). Keep it short and
+# structurally distinct from hex so MASKED_PATTERN can round-trip it.
+_KEY_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,15}$")
 
 # Fix #3: Use frozenset for sensitive_keys to prevent mutation.
 # Fix #16: Note — `object.__setattr__` is used in __post_init__ to initialize
@@ -16,12 +21,23 @@ class BlindLogConfig:
     salt: str = ""
     sensitive_keys: FrozenSet[str] = field(default_factory=lambda: frozenset(DEFAULT_SENSITIVE_KEYS))
     debug_mode: bool = False
+    # Optional rotation label embedded in mask prefixes (e.g. "v2" -> blnd_v2_ref_...).
+    # Empty string keeps the unversioned v1.1 prefixes for backward compatibility.
+    key_id: str = ""
 
     def __post_init__(self):
         if not self.secret_key:
             object.__setattr__(self, 'secret_key', os.environ.get("BLINDLOG_SECRET", ""))
         if not self.salt:
             object.__setattr__(self, 'salt', os.environ.get("BLINDLOG_SALT", ""))
+        if not self.key_id:
+            object.__setattr__(self, 'key_id', os.environ.get("BLINDLOG_KEY_ID", ""))
+
+        if self.key_id and not _KEY_ID_RE.match(self.key_id):
+            raise ValueError(
+                "BlindLog: key_id must match ^[A-Za-z][A-Za-z0-9_]{0,15}$ "
+                f"(got {self.key_id!r}). Example: 'v2'."
+            )
         
         env_debug = os.environ.get("BLINDLOG_DEBUG", "").lower() in ("true", "1", "yes")
         if env_debug and not self.debug_mode:
