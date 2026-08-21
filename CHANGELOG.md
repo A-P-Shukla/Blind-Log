@@ -2,67 +2,69 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.2.0] — 2026-07-24
+
+### Breaking Changes
+
+> **Note on Upgrades:** These changes alter newly emitted mask widths. Historical v1.1 sentinels remain recognized (idempotent), but external parsers that assumed fixed 10/12 hex lengths or 4-6-6-4 credit card layouts must accept 16 hex and 4-8-8-4.
+
+- **64-bit truncated digests:** Email, opaque (`blind:`), IP, API key, phone, and SSN hashes are 16 hex characters (was 10 or 12). Credit cards use `4111-<8 hex>-<8 hex>-1234` (was 4-6-6-4 / 48-bit). 50% birthday collision resistance is ~4 billion values.
+- **PyPI metadata:** Package version is `1.2.0`; package metadata updated with author and repository details.
+
+### Added
+
+- **Security model documentation:** Documented threat boundaries, trust models, entropy metrics, and responsible vulnerability reporting in [SECURITY.md](./SECURITY.md).
+- **Key rotation support (`key_id` / `BLINDLOG_KEY_ID`):** Optional rotation identifier prefixed in generated masks (e.g. `blnd_v2_ref_...`, `blind_v2:...`). Valid format is `^[A-Za-z][A-Za-z0-9_]{0,15}$`.
+- **`structlog` processor integration:** Added `blindlog.integrations.structlog.make_blindlog_processor` for seamless inclusion in structlog processor pipelines (installable via `pip install "blindlog[structlog]"`).
+- **Top-level `DEFAULT_SENSITIVE_KEYS` export:** Exported from top-level package for custom rule extension.
+- **Thread safety:** Added `threading.RLock()` to `RuleRegistry` for concurrent `register()` and `process_*` calls across multi-threaded workers.
+- **Performance benchmarks:** Added benchmark summary comparing BLAKE2b vs HMAC-SHA256 and throughput floors.
+
+### Changed
+
+- **`MASKED_PATTERN` multi-era support:** Accepts versioned prefixes as well as both 48-bit and 64-bit credit card structures to prevent double-masking across key migrations.
+
+---
+
+## [1.1.1] — 2026-07-24
+
+### Fixed
+
+- **Idempotency stability:** Credit card masks (`4111-<8 hex>-<8 hex>-1234`) are properly recognized by `MASKED_PATTERN`, ensuring repeat `mask()` passes do not rewrite them to opaque hashes.
+- **Container recursion:** `tuple` and `set`/`frozenset` objects under sensitive keys are now recursively traversed and masked.
+- **Type distinction:** `bool` values under sensitive keys are type-prefixed before hashing to prevent collision with integers (as `bool` subclasses `int` in Python).
+- **Oversized sensitive values:** Values exceeding 10,000 characters under sensitive keys receive keyed opaque hashes rather than skipping masking.
+- **Formatter error handling:** Formatter masking failures now suppress records (`[BLINDLOG MASKING FAILED - RECORD SUPPRESSED]`) rather than leaking plaintext data.
+
+---
+
 ## [1.1.0] — 2026-06-12
 
 ### Breaking Changes
 
-> **IMPORTANT:** These changes alter masking behavior and output formats.
-> Users upgrading from earlier versions should review their log parsing pipelines.
-
-- **Masked output prefix changed:** Email pseudonyms now use `blnd_ref_` prefix instead of `ref_` (e.g. `blnd_ref_81ca7b82f012...@masked.com`). Other masked values use `blnd_ip_`, `blnd_key_`, `blnd_ph_`, `blnd_ssn_` prefixes respectively.
-- **Key matching strategy changed:** From substring matching (v1.0) → exact + suffix matching (v1.1). Fields are masked if the key name exactly matches a sensitive key OR ends with `_<key>`, `-<key>`, or `.<key>`. camelCase keys like `refreshToken` are normalized to `refresh_token` before matching.
-- **`sensitive_keys` is now a `frozenset`:** Cannot be mutated after config construction. Pass a custom `frozenset` at construction time to override.
-- **`BlindLogConfig` is frozen:** All config fields are immutable after construction. Use `object.__setattr__` only in `__post_init__` for computed fields.
+- **Mask prefix updates:** Email pseudonyms use `blnd_ref_` prefix. Values use `blnd_ip_`, `blnd_key_`, `blnd_ph_`, `blnd_ssn_` prefixes.
+- **Key matching strategy:** Suffix matching with delimiters (`_`, `-`, `.`) and camelCase/hyphen normalization.
+- **Immutable configuration:** `BlindLogConfig` is a frozen dataclass with a `frozenset` of `sensitive_keys`.
 
 ### Added
 
-- **Phone number masking:** `PHONE_REGEX` detects NANP and international phone numbers. `phone` and `mobile` added to `DEFAULT_SENSITIVE_KEYS`.
-- **SSN masking:** `SSN_REGEX` detects US Social Security Numbers. `ssn_number` added to `DEFAULT_SENSITIVE_KEYS`.
-- **API key coverage expanded:** Stripe (`sk_live_`, `sk_test_`), AWS (`AKIA...`), Slack (`xox[bpas]-`), GitHub fine-grained PATs (`github_pat_`) now detected.
-- **IPv4 validation:** Octet range validation (0-255) prevents false positives on version strings.
-- **camelCase key normalization:** `refreshToken`, `APIKey`, `OAuth2Token` etc. are normalized to snake_case before matching.
-- **Dot-separated key support:** `user.password`, `auth.token` detected via `.` separator.
-- **Response body masking:** FastAPI middleware now intercepts and masks response bodies (with 5MB OOM guard).
-- **Idempotent masking:** `mask()` safe to call multiple times — sentinel-prefixed values skipped.
-- **Exception trace masking:** `BlindLogFormatter` masks `exc_info` stack traces to prevent PII leaks.
-- **Dict-style log args:** `BlindLogFormatter` correctly handles `logging.info("%(name)s", {"name": "user@example.com"})`.
-- **Lazy initialization:** Both `BlindLogFormatter` and `BlindLogFastAPIMiddleware` defer `BlindLogger()` construction — no crash if `BLINDLOG_SECRET` is absent at import time.
-- **Key derivation caching:** `blake_key` computed once at config init, not per hash call.
-- **Key normalization caching:** `normalize_key()` uses `lru_cache(2048)` for high-throughput scenarios.
-- **Registry keyed fallback:** Callback failures in `process_text` now use a keyed BLAKE2b hash, not a rainbow-table-reversible unkeyed hash.
-- **`MaskingEngine` and `BlindLogConfig` exported:** Available from top-level `from blindlog import MaskingEngine, BlindLogConfig`.
-- **Duplicate HTTP headers preserved:** Middleware logs headers as list-of-tuples, not dict.
-- **Non-UTF-8 header safety:** `errors='replace'` prevents `UnicodeDecodeError` crashes.
-- **`http.disconnect` forwarding:** Middleware `receive_proxy` forwards real ASGI events after buffer is exhausted.
+- Phone number masking (`PHONE_REGEX`).
+- SSN masking (`SSN_REGEX`).
+- Expanded API key regex (OpenAI, Stripe, AWS, Slack, GitHub).
+- IPv4 octet range validation (0-255).
+- Pure ASGI middleware for FastAPI / Starlette with request/response body and header protection.
+- Traceback exception sanitization in `BlindLogFormatter`.
 
-### Removed
-
-- **`key` from `DEFAULT_SENSITIVE_KEYS`:** Too many false positives (`primary_key`, `foreign_key`, `cache_key`). Use `private_key`, `api_key`, `secret_key`, `signing_key`, `encryption_key` instead.
-- **`cell` and `telephone` from `DEFAULT_SENSITIVE_KEYS`:** Too many false positives (`fuel_cell`). Phone detection relies on `phone`, `mobile` keys and `PHONE_REGEX` value scanning.
-
-### Fixed
-
-- `DEFAULT_SENSITIVE_KEYS` mutable singleton — each config gets its own `frozenset` copy
-- Operator precedence bug: `None` under sensitive keys now properly masked
-- Credit card test assertions updated to match actual hash-based format
-- `print()` replaced with `logging.getLogger()` throughout middleware
-- `BlindLogFormatter` masking failure now suppresses record instead of leaking PII
-- `warnings.warn` stacklevel corrected to point at user call site
-- Hardcoded Windows paths replaced with `os.path.dirname(__file__)`
-- `pyproject.toml` `pythonpath` configured for pytest
-- **Security:** Hardened idempotency sentinels to use strict mathematical regex (`MASKED_PATTERN`), preventing bypass vectors via manual `blind:` prefixes.
-- **Security:** Middleware header interceptor now wraps contexts dicts (e.g., `{"Cookie": "..."}`), successfully masking standalone HTTP headers.
-- **Security:** Added `cookie` and `set_cookie` natively to `DEFAULT_SENSITIVE_KEYS` and forced `-` to `_` normalizations to protect common web auth streams natively.
+---
 
 ## [0.1.0] — 2026-04-08
 
 ### Added
 
-- Initial release
-- BLAKE2b deterministic pseudonymization
-- Structure-preserving email and credit card masking
-- Recursive DFS walker with cycle detection
-- FastAPI ASGI middleware
-- `BlindLogFormatter` for standard library `logging`
-- ReDoS protection (10,000 char limit)
-- OOM protection (5MB buffer limit)
+- Initial release.
+- BLAKE2b deterministic pseudonymization engine.
+- Structure-preserving email and credit card masking.
+- Recursive DFS walker with cycle detection.
