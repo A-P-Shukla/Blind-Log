@@ -1,6 +1,7 @@
 from typing import Callable, List, Tuple, Optional
 import re
 import logging
+import threading
 
 _log = logging.getLogger("blindlog.registry")
 
@@ -10,14 +11,19 @@ class RuleRegistry:
     """
     Extensible configuration registry supporting mapping of deterministic 
     cryptographic functions to custom user-provided Regex patterns.
+
+    ``register()`` and the process methods share a lock so concurrent
+    ``mask()`` calls are safe. Prefer registering rules at startup.
     """
     def __init__(self, keyed_hash_fn: Optional[MaskCallback] = None):
         self._rules: List[Tuple[re.Pattern, MaskCallback]] = []
         self._keyed_hash_fn = keyed_hash_fn
+        self._lock = threading.RLock()
         
     def register(self, pattern: re.Pattern, callback: MaskCallback):
         """Registers a customized fallback regex structure."""
-        self._rules.append((pattern, callback))
+        with self._lock:
+            self._rules.append((pattern, callback))
 
     def _is_already_masked(self, value: str) -> bool:
         """Check if a value has already been masked to ensure idempotency."""
@@ -30,7 +36,7 @@ class RuleRegistry:
             return self._keyed_hash_fn(value)
         import hashlib
         _log.warning("BlindLog: Using unkeyed fallback hash — keyed_hash_fn not configured.")
-        return f"blind:{hashlib.blake2b(value.encode(), digest_size=5).hexdigest()}"
+        return f"blind:{hashlib.blake2b(value.encode(), digest_size=8).hexdigest()}"
         
     def process_value(self, value: str, fallback_callback: MaskCallback) -> str:
         """
@@ -41,7 +47,10 @@ class RuleRegistry:
         if self._is_already_masked(value):
             return value
 
-        for pattern, callback in self._rules:
+        with self._lock:
+            rules = tuple(self._rules)
+
+        for pattern, callback in rules:
             if pattern.fullmatch(value):
                 try:
                     return callback(value)
@@ -55,7 +64,10 @@ class RuleRegistry:
         Cumulatively masks all recognized embedded objects within a standard string block.
         On callback failure, applies a keyed fallback hash.
         """
-        for pattern, callback in self._rules:
+        with self._lock:
+            rules = tuple(self._rules)
+
+        for pattern, callback in rules:
             def safe_sub(match, cb=callback):
                 matched = match.group(0)
                 if self._is_already_masked(matched):

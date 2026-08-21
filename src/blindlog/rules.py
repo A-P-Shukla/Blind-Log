@@ -41,20 +41,39 @@ PHONE_REGEX = re.compile(
 # Fix #12: SSN regex (US format)
 SSN_REGEX = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
 
-# Collision-resistant sentinel prefixes for idempotency
+# Collision-resistant sentinel prefixes for idempotency (unversioned / key_id="").
+# Versioned forms (blnd_v2_ref_, blind_v2:, …) are accepted by MASKED_PATTERN.
 MASKED_PREFIXES = ("blnd_ref_", "blind:", "blnd_ip_", "blnd_key_", "blnd_ph_", "blnd_ssn_")
 
-# Strict idempotency validation pattern matching generated masks exactly
+# Optional key_id infix: letter + up to 15 alnum/underscore, always followed by `_`
+# when used as blnd_{id}_ref_ / blnd_{id}_ip_ etc.
+_KID = r'(?:[A-Za-z][A-Za-z0-9_]{0,15}_)?'
+_KID_BLIND = r'(?:_[A-Za-z][A-Za-z0-9_]{0,15})?'
+
+# Strict idempotency validation. Accepts:
+# - unversioned and key_id-versioned prefixes
+# - v1.1 hex widths (10/12) and v1.2 64-bit widths (16)
+# - CC 4-6-6-4 (legacy 48-bit) and 4-8-8-4 (64-bit); real 4-4-4-4 PANs never match
 MASKED_PATTERN = re.compile(
     r'^('
-    r'blnd_ref_[0-9a-f]{12}\.\.\.@masked\.com'
-    r'|blind:[0-9a-f]{10}'
-    r'|blnd_ip_[0-9a-f]{10}'
-    r'|blnd_key_[0-9a-f]{10}'
-    r'|blnd_ph_[0-9a-f]{10}'
-    r'|blnd_ssn_[0-9a-f]{10}'
+    rf'blnd_{_KID}ref_[0-9a-f]{{12,16}}\.\.\.@masked\.com'
+    rf'|blind{_KID_BLIND}:[0-9a-f]{{10,16}}'
+    rf'|blnd_{_KID}ip_[0-9a-f]{{10,16}}'
+    rf'|blnd_{_KID}key_[0-9a-f]{{10,16}}'
+    rf'|blnd_{_KID}ph_[0-9a-f]{{10,16}}'
+    rf'|blnd_{_KID}ssn_[0-9a-f]{{10,16}}'
+    r'|\d{4}-[0-9a-f]{8}-[0-9a-f]{8}-\d{4}'
+    r'|\d{4}-[0-9a-f]{6}-[0-9a-f]{6}-\d{4}'
     r')$'
 )
+
+# Digest widths (hex chars). 16 hex = 64 bits of truncated BLAKE2b output.
+# Birthday-paradox 50% collision ~ 2^32 ≈ 4e9 distinct values — sized for
+# high-volume financial/identity logs. Legacy 10/12-char masks still match
+# MASKED_PATTERN so historical logs remain idempotent.
+OPAQUE_HASH_LEN = 16
+EMAIL_HASH_LEN = 16
+CC_HASH_LEN = 16
 
 # Fix #7: Removed generic 'key' — replaced with specific sensitive key variants
 # Fix #11: Removed 'cell' and 'telephone' — too many false positives (fuel_cell, etc.)
