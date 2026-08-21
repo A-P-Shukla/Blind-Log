@@ -11,7 +11,7 @@ def test_deterministic_hashing():
     hash1 = logger._hash("akhand@gmail.com")
     hash2 = logger._hash("akhand@gmail.com")
     assert hash1 == hash2
-    assert len(hash1) == 12
+    assert len(hash1) == 16
     
 def test_structure_preserving_masking_email():
     logger = BlindLogger(secret_key="secret")
@@ -27,6 +27,8 @@ def test_structure_preserving_masking_cc():
     assert masked_cc.endswith("4444")
     parts = masked_cc.split("-")
     assert len(parts) == 4
+    assert len(parts[1]) == 8
+    assert len(parts[2]) == 8
     assert parts[1] != "xxxx"
     assert parts[2] != "xxxx"
 
@@ -62,3 +64,59 @@ def test_email_fallback_consistency():
     result = logger._mask_email("notanemail")
     assert result.startswith("blnd_ref_")
     assert result.endswith("...@masked.com")
+    # 16 hex chars between prefix and ellipsis
+    inner = result[len("blnd_ref_"):].split("...")[0]
+    assert len(inner) == 16
+
+def test_formatter_masks_exceptions_and_args():
+    import io
+    import logging
+    from blindlog.formatters import BlindLogFormatter
+
+    logger = BlindLogger(secret_key="secret")
+    fmt = BlindLogFormatter(blind_logger=logger)
+    log = logging.getLogger("test_formatter_masks")
+    log.handlers.clear()
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(fmt)
+    log.addHandler(handler)
+
+    log.info("Hello %s", "user@example.com")
+    log.info("%(name)s logged in", {"name": "ceo@corp.com"})
+    try:
+        raise ValueError("User akhand@gmail.com not found")
+    except ValueError:
+        log.exception("A system error occurred")
+
+    out = buf.getvalue()
+    assert "user@example.com" not in out
+    assert "ceo@corp.com" not in out
+    assert "akhand@gmail.com" not in out
+    assert "blnd_ref_" in out
+
+def test_formatter_fail_closed_on_masking_error():
+    import io
+    import logging
+    from blindlog.formatters import BlindLogFormatter
+
+    class BoomEngine:
+        def mask(self, payload):
+            raise RuntimeError("mask boom")
+
+    fmt = BlindLogFormatter(blind_logger=BoomEngine())
+    log = logging.getLogger("test_formatter_fail_closed")
+    log.handlers.clear()
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(fmt)
+    log.addHandler(handler)
+
+    log.info("secret user@example.com should not leak")
+    out = buf.getvalue()
+    assert "user@example.com" not in out
+    assert "BLINDLOG MASKING FAILED" in out

@@ -33,7 +33,10 @@ def test_deeply_nested_json():
     masked_cc = masked["data"]["history"][0]["cc_number"]
     assert masked_cc.startswith("1111")
     assert masked_cc.endswith("4444")
-    assert len(masked_cc.split("-")) == 4
+    parts = masked_cc.split("-")
+    assert len(parts) == 4
+    assert len(parts[1]) == 8
+    assert len(parts[2]) == 8
 
 def test_circular_reference_protection():
     logger = BlindLogger(secret_key="secret")
@@ -178,3 +181,103 @@ def test_idempotent_sentinel_bypass_fix():
     # The email regex will match user@example.com and mask it, ignoring the 'blind:' part
     assert "user@example.com" not in result2["message"]
     assert "blind:blnd_ref_" in result2["message"]
+
+def test_credit_card_idempotent_masking():
+    """Structure-preserving CC masks must survive a second mask() pass."""
+    logger = BlindLogger(secret_key="secret")
+    payload = {"credit_card": "4111-2222-3333-4444"}
+    once = logger.mask(payload)
+    twice = logger.mask(once)
+    assert once == twice
+    assert once["credit_card"].startswith("4111")
+    assert once["credit_card"].endswith("4444")
+    assert once["credit_card"] != "4111-2222-3333-4444"
+    # Real 4-4-4-4 PANs must still be masked (not treated as already-masked 4-6-6-4)
+    assert logger.mask({"credit_card": "5500-0000-0000-0004"})["credit_card"] != "5500-0000-0000-0004"
+
+def test_tuple_under_sensitive_key_masked():
+    """Tuples under sensitive keys previously leaked plaintext."""
+    logger = BlindLogger(secret_key="secret")
+    result = logger.mask({"password": ("alpha-secret", "beta-secret")})
+    assert isinstance(result["password"], tuple)
+    assert result["password"][0] != "alpha-secret"
+    assert result["password"][1] != "beta-secret"
+    assert "blind:" in result["password"][0]
+    assert "blind:" in result["password"][1]
+
+def test_set_under_sensitive_key_masked():
+    logger = BlindLogger(secret_key="secret")
+    result = logger.mask({"password": {"gamma-secret", "delta-secret"}})
+    assert isinstance(result["password"], set)
+    assert "gamma-secret" not in result["password"]
+    assert "delta-secret" not in result["password"]
+    assert all(isinstance(v, str) and v.startswith("blind:") for v in result["password"])
+
+def test_bool_under_sensitive_key_uses_type_prefix():
+    """bool must not collide with int hashing (bool is a subclass of int)."""
+    logger = BlindLogger(secret_key="secret")
+    bool_masked = logger.mask({"password": True})["password"]
+    int_masked = logger.mask({"password": 1})["password"]
+    assert bool_masked != int_masked
+    assert bool_masked.startswith("blind:")
+    assert int_masked.startswith("blind:")
+
+def test_long_force_mask_still_hashes():
+    """Oversized sensitive values skip regex but still receive a keyed hash."""
+    logger = BlindLogger(secret_key="secret")
+    long_secret = "s" * 10001
+    result = logger.mask({"password": long_secret})
+    assert result["password"].startswith("blind:")
+    assert result["password"] != long_secret
+    # Free-text path still refuses huge scans (ReDoS guard)
+    assert logger.mask("x" * 10001) == "<Skipped due to length: ReDoS Protection>"
+
+def test_legacy_48bit_cc_mask_is_idempotent():
+    """v1.1 4-6-6-4 CC sentinels must not be re-hashed after the 64-bit upgrade."""
+    logger = BlindLogger(secret_key="secret")
+    legacy = "4111-0dc091-5d00bb-4444"
+    result = logger.mask({"credit_card": legacy})
+    assert result["credit_card"] == legacy
+
+def test_key_id_versions_prefixes_and_isolates_hashes():
+    v1 = BlindLogger(secret_key="secret", key_id="v1")
+    v2 = BlindLogger(secret_key="rotated-secret", key_id="v2")
+    email = "user@example.com"
+    m1 = v1.mask(email)
+    m2 = v2.mask(email)
+    assert m1.startswith("blnd_v1_ref_")
+    assert m2.startswith("blnd_v2_ref_")
+    assert m1 != m2
+    assert v1.mask(m1) == m1
+    assert v2.mask(m2) == m2
+    opaque = v1.mask({"password": "super-secret"})
+    assert opaque["password"].startswith("blind_v1:")
+
+def test_invalid_key_id_rejected():
+    from blindlog.config import BlindLogConfig
+    with pytest.raises(ValueError):
+        BlindLogConfig(secret_key="s", key_id="v 2")
+    with pytest.raises(ValueError):
+        BlindLogConfig(secret_key="s", key_id="2v")
+
+def test_default_sensitive_keys_exported():
+    from blindlog import DEFAULT_SENSITIVE_KEYS
+    assert "password" in DEFAULT_SENSITIVE_KEYS
+    assert "email" in DEFAULT_SENSITIVE_KEYS
+    assert "name" not in DEFAULT_SENSITIVE_KEYS
+    assert "count" not in DEFAULT_SENSITIVE_KEYS
+    assert "key" not in DEFAULT_SENSITIVE_KEYS
+
+def test_concurrent_mask_is_thread_safe():
+    import concurrent.futures
+    logger = BlindLogger(secret_key="secret")
+    payload = {"email": "user@example.com", "password": "hunter2", "note": "ok"}
+
+    def _run():
+        return logger.mask(payload)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: _run(), range(64)))
+    assert len(set(str(r) for r in results)) == 1
+    assert "user@example.com" not in str(results[0])
+    assert "hunter2" not in str(results[0])

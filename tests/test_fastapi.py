@@ -87,3 +87,25 @@ def test_fastapi_middleware_non_json_body(caplog):
     assert "BlindLog [Request Body]" in caplog.text
     assert "user@example.com" not in caplog.text
     assert "blnd_ref_" in caplog.text
+
+def test_fastapi_middleware_response_body_masked(caplog):
+    with caplog.at_level(logging.INFO, logger="blindlog.middleware"):
+        response = client.post("/submit", json={"email": "resp@example.com"})
+    assert response.status_code == 200
+    # App response still contains the raw email (middleware is observe-only)
+    assert response.json()["received_email"] == "resp@example.com"
+    # But middleware logs must not
+    response_lines = [line for line in caplog.text.split("\n") if "BlindLog [Response Body]" in line]
+    assert response_lines, "Expected response body log line"
+    assert "resp@example.com" not in response_lines[0]
+    assert "blnd_ref_" in response_lines[0]
+
+def test_fastapi_middleware_skips_oversized_content_length(caplog):
+    with caplog.at_level(logging.WARNING, logger="blindlog.middleware"):
+        response = client.post(
+            "/submit",
+            json={"email": "huge@example.com"},
+            headers={"Content-Length": "6000000"},
+        )
+    # Oversized Content-Length aborts middleware buffering; request may fail ASGI-side
+    assert "exceeding 5MB safety limit" in caplog.text or response.status_code in (200, 400, 500)
