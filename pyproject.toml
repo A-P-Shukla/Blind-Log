@@ -4,21 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blindlog"
-version = "1.1.0"
+version = "1.2.0"
 description = "Deterministic privacy-preserving logger for Python."
 readme = "README.md"
 requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+    {name = "A. P. Shukla"}
+]
+keywords = ["logging", "pii", "privacy", "gdpr", "pseudonymization", "observability"]
 dependencies = [
     # Zero dependencies for core!
     # We use standard lib: json, logging, hashlib, os, re
 ]
 
 [project.urls]
+Homepage = "https://github.com/A-P-Shukla/Blind-Log"
 Repository = "https://github.com/A-P-Shukla/Blind-Log"
 "Bug Tracker" = "https://github.com/A-P-Shukla/Blind-Log/issues"
+"Security" = "https://github.com/A-P-Shukla/Blind-Log/security/advisories"
 
 [project.optional-dependencies]
-fastapi = ["fastapi", "starlette"]  # Users only install this if they need it
+fastapi = ["fastapi", "starlette"]
+structlog = ["structlog"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

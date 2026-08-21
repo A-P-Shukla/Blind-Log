@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Set, Callable
+from typing import Any, Set, Callable
 from blindlog.rules import normalize_key
 
 def walk_and_mask(
@@ -10,7 +10,7 @@ def walk_and_mask(
     force_mask: bool = False
 ) -> Any:
     """
-    Recursively walks through dictionaries and lists to mask sensitive data.
+    Recursively walks through dictionaries, lists, tuples, and sets to mask sensitive data.
     Implements DFS with cycle detection to prevent infinite recursion on self-referencing objects.
     
     Hybrid Strategy:
@@ -60,12 +60,13 @@ def walk_and_mask(
             )
             
             if is_sensitive:
+                # bool is a subclass of int — check bool before int/float
                 if isinstance(v, str):
                     masked_dict[k] = mask_value_fn(v)
-                elif isinstance(v, (int, float)):
-                    masked_dict[k] = mask_value_fn(str(v))
                 elif isinstance(v, bool):
                     masked_dict[k] = mask_value_fn(f"\x00bool\x00{v}")
+                elif isinstance(v, (int, float)):
+                    masked_dict[k] = mask_value_fn(str(v))
                 elif v is None:
                     masked_dict[k] = mask_value_fn("\x00NoneType\x00")
                 else:
@@ -77,9 +78,33 @@ def walk_and_mask(
         return masked_dict
 
     elif isinstance(data, list):
-        masked_list = [walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=force_mask) for item in data]
+        masked_list = [
+            walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=force_mask)
+            for item in data
+        ]
         visited.remove(obj_id)
         return masked_list
+
+    elif isinstance(data, tuple):
+        # Tuples under sensitive keys previously leaked plaintext; walk like lists.
+        masked_tuple = tuple(
+            walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=force_mask)
+            for item in data
+        )
+        visited.remove(obj_id)
+        return masked_tuple
+
+    elif isinstance(data, (set, frozenset)):
+        # Preserve container type when possible; fall back to list if items become unhashable.
+        masked_items = [
+            walk_and_mask(item, sensitive_keys, mask_value_fn, mask_text_fn, visited, force_mask=force_mask)
+            for item in data
+        ]
+        visited.remove(obj_id)
+        try:
+            return type(data)(masked_items)
+        except TypeError:
+            return masked_items
 
     elif isinstance(data, bytes):
         try:
