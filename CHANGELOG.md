@@ -1,6 +1,23 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes
+
+## [1.2.1] - 2026-09-09
+
+### Fixed
+- **Zero Core Dependencies**: Relocated `build` and `twine` out of runtime `dependencies` into `[project.optional-dependencies] dev` in `pyproject.toml`. Standard core installation now has zero external dependencies.
+- **Formatter `extra=` Attribute Leak**: `BlindLogFormatter` now traverses `record.__dict__` non-reserved attributes to sanitize and mask custom metadata (`extra={"email": "..."}`) and custom format string keys (`%(email)s`).
+- **Custom Prefix Idempotency**: Generalized `MASKED_PATTERN` regex to recognize custom registered tag prefixes (`blnd_{kid}[tag]_{hex}`), preventing double-masking rewrite to `blind:...` on dictionary force paths.
+- **Key Derivation Domain Separation**: Introduced null-byte delimiter (`safe_secret || \x00 || safe_salt`) in `_derive_blake_key()` to prevent delimiter collisions between secret and salt.
+
+### Added
+- **Public Masking Interfaces**: Added public `hash_text()` and `tag()` helper methods on `BlindLogger`.
+- **Expanded Security Model Documentation**: Added comprehensive Threat Model, GDPR Recital 26 pseudonymization vs anonymization guidance, and thread-safety details to `README.md`.
+- **CI Test Workflow**: Updated `.github/workflows/test.yml` to install `.[fastapi,structlog,dev]`.
+
+---
+
+ to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
