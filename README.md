@@ -1,4 +1,4 @@
-# BlindLog v1.2.0
+# BlindLog v1.2.1
 
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-181717.svg?style=for-the-badge&logo=github)](https://github.com/A-P-Shukla/Blind-Log)
 
