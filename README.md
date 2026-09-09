@@ -186,7 +186,7 @@ internal_id_pattern = re.compile(r"EMP-\d{6}")
 
 # 2. Register callback
 def mask_employee_id(match_text: str) -> str:
-    return f"blnd_emp_{logger._hash(match_text, length=16)}"
+    return f"{logger.tag('emp')}{logger.hash_text(match_text, length=16)}"
 
 logger.registry.register(internal_id_pattern, mask_employee_id)
 
