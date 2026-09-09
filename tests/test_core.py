@@ -120,3 +120,56 @@ def test_formatter_fail_closed_on_masking_error():
     out = buf.getvalue()
     assert "user@example.com" not in out
     assert "BLINDLOG MASKING FAILED" in out
+
+
+def test_formatter_masks_extra_attributes():
+    import logging
+    from blindlog.formatters import BlindLogFormatter
+    
+    formatter = BlindLogFormatter("%(message)s email=%(email)s user=%(user)s", blind_logger=BlindLogger(secret_key="fmt-secret"))
+    record = logging.LogRecord(
+        name="test_logger",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="Login event",
+        args=(),
+        exc_info=None,
+    )
+    record.email = "target@example.com"
+    record.user = {"sub": "admin", "phone": "+15551234567"}
+    
+    formatted = formatter.format(record)
+    assert "target@example.com" not in formatted
+    assert "+15551234567" not in formatted
+    assert "blnd_ref_" in formatted
+    assert "blnd_ph_" in formatted
+
+def test_custom_rule_idempotency_force_path():
+    import re
+    logger = BlindLogger(secret_key="secret")
+    emp_regex = re.compile(r'\bEMP-\d{6}\b')
+    logger.registry.register(emp_regex, lambda text: f"{logger.tag('emp')}{logger.hash_text(text, length=16)}")
+    
+    # 1. Force path: dictionary matching sensitive key
+    payload = {"password": "EMP-104928"}
+    first_pass = logger.mask(payload)
+    assert first_pass["password"].startswith("blnd_emp_")
+    
+    # 2. Re-masking must remain idempotent and NOT rewrite to blind:
+    second_pass = logger.mask(first_pass)
+    assert second_pass["password"] == first_pass["password"]
+
+def test_secret_salt_domain_separation():
+    # secret="ab", salt="c" vs secret="a", salt="bc"
+    c1 = BlindLogger(secret_key="ab", salt="c")
+    c2 = BlindLogger(secret_key="a", salt="bc")
+    assert c1.config.blake_key != c2.config.blake_key
+    assert c1.hash_text("test") != c2.hash_text("test")
+
+def test_public_hash_text_and_tag():
+    logger = BlindLogger(secret_key="secret", key_id="v2")
+    h = logger.hash_text("sample")
+    assert len(h) == 16
+    assert logger.tag("custom") == "blnd_v2_custom_"
+    assert logger.tag("blind") == "blind_v2:"
