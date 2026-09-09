@@ -51,7 +51,7 @@ class BlindLogConfig:
     def _derive_blake_key(self) -> bytes:
         safe_secret = self.secret_key or ""
         safe_salt = self.salt or ""
-        raw = (safe_secret + safe_salt).encode('utf-8')
+        raw = safe_secret.encode('utf-8') + b'\x00' + safe_salt.encode('utf-8')
 
         if len(raw) > 64:
             warnings.warn(

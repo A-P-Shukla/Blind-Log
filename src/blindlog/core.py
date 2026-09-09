@@ -35,7 +35,21 @@ class BlindLogger(MaskingEngine):
         self.registry.register(PHONE_REGEX, lambda v: f"{self._tag('ph')}{self._hash(v, length=OPAQUE_HASH_LEN)}")
         self.registry.register(SSN_REGEX, lambda v: f"{self._tag('ssn')}{self._hash(v, length=OPAQUE_HASH_LEN)}")
 
+    def tag(self, kind: str) -> str:
+        """Public helper to build a mask prefix, optionally versioned with config.key_id."""
+        kid = self.config.key_id
+        if kind == "blind":
+            return f"blind_{kid}:" if kid else "blind:"
+        if kid:
+            return f"blnd_{kid}_{kind}_"
+        return f"blnd_{kind}_"
+
     def _tag(self, kind: str) -> str:
+        return self.tag(kind)
+
+    def hash_text(self, value: str, length: int = EMAIL_HASH_LEN) -> str:
+        """Public deterministic keyed BLAKE2b hashing method."""
+        return self._hash(value, length=length)
         """Build a mask prefix, optionally versioned with config.key_id."""
         kid = self.config.key_id
         if kind == "blind":
