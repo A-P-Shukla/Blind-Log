@@ -5,6 +5,13 @@ from blindlog.interfaces import MaskingEngine
 
 _log = logging.getLogger("blindlog.formatter")
 
+_RESERVED_RECORD_ATTRS = frozenset({
+    "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
+    "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
+    "created", "msecs", "relativeCreated", "thread", "threadName",
+    "processName", "process", "taskName", "message", "asctime"
+})
+
 class BlindLogFormatter(logging.Formatter):
     """
     A custom logging formatter that intercepts and pseudonymizes sensitive data 
@@ -33,27 +40,35 @@ class BlindLogFormatter(logging.Formatter):
             elif isinstance(record_copy.msg, str):
                 record_copy.msg = self.blind_logger.mask(record_copy.msg)
                 
-            # Fix #1: Handle both tuple and dict-style log args
+            # Handle both tuple and dict-style log args
             if record_copy.args:
                 args_copy = copy.deepcopy(record_copy.args)
                 if isinstance(args_copy, dict):
                     # Mapping style: logger.info("%(name)s logged in", {"name": "user@example.com"})
                     record_copy.args = {
-                        k: self.blind_logger.mask(v) if isinstance(v, (str, dict, list)) else v
+                        k: self.blind_logger.mask(v) if isinstance(v, (str, dict, list, tuple, set, frozenset)) else v
                         for k, v in args_copy.items()
                     }
                 elif isinstance(args_copy, tuple):
                     # Positional style: logger.info("Hello %s", "user@example.com")
                     record_copy.args = tuple(
-                        self.blind_logger.mask(arg) if isinstance(arg, (str, dict, list)) else arg
+                        self.blind_logger.mask(arg) if isinstance(arg, (str, dict, list, tuple, set, frozenset)) else arg
                         for arg in args_copy
                     )
 
-            # Fix #2: Mask exception info to prevent PII leaks in stack traces
+            # Mask exception info to prevent PII leaks in stack traces
             if record_copy.exc_info and record_copy.exc_info[0] is not None:
                 exc_text = self.formatException(record_copy.exc_info)
                 record_copy.exc_text = self.blind_logger.mask(exc_text)
                 record_copy.exc_info = None  # Prevent super() from re-formatting unmasked
+
+            # Mask extra custom attributes in record_copy.__dict__
+            for attr, val in list(record_copy.__dict__.items()):
+                if attr not in _RESERVED_RECORD_ATTRS and not attr.startswith("_"):
+                    if isinstance(val, (str, dict, list, tuple, set, frozenset)):
+                        record_copy.__dict__[attr] = self.blind_logger.mask(
+                            copy.deepcopy(val) if isinstance(val, (dict, list, set, frozenset)) else val
+                        )
 
         except Exception as e:
             _log.error("BlindLog: Masking failed. Reason: %s", e)
