@@ -13,10 +13,7 @@ authors = [
     {name = "A. P. Shukla"}
 ]
 keywords = ["logging", "pii", "privacy", "gdpr", "pseudonymization", "observability"]
-dependencies = [
-    # Zero dependencies for core!
-    # We use standard lib: json, logging, hashlib, os, re
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/A-P-Shukla/Blind-Log"
@@ -27,6 +24,7 @@ Repository = "https://github.com/A-P-Shukla/Blind-Log"
 [project.optional-dependencies]
 fastapi = ["fastapi", "starlette"]
 structlog = ["structlog"]
+dev = ["build>=1.4.4", "twine>=6.2.0", "pytest"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
