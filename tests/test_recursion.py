@@ -233,11 +233,26 @@ def test_long_force_mask_still_hashes():
     assert logger.mask("x" * 10001) == "<Skipped due to length: ReDoS Protection>"
 
 def test_legacy_48bit_cc_mask_is_idempotent():
-    """v1.1 4-6-6-4 CC sentinels must not be re-hashed after the 64-bit upgrade."""
+    """Unauthenticated legacy 4-6-6-4 masks must not bypass sensitive-key masking."""
     logger = BlindLogger(secret_key="secret")
     legacy = "4111-0dc091-5d00bb-4444"
     result = logger.mask({"credit_card": legacy})
-    assert result["credit_card"] == legacy
+    assert result["credit_card"] != legacy
+
+def test_already_masked_shape_cannot_bypass_sensitive_keys():
+    logger = BlindLogger(secret_key="secret")
+
+    forged = {
+        "password": "blind:0123456789abcdef",
+        "old_password": "blnd_x_0123456789",
+        "credit_card": "1234-56789012-34567890-1234",
+    }
+
+    masked = logger.mask(forged)
+
+    assert masked["password"] != forged["password"]
+    assert masked["old_password"] != forged["old_password"]
+    assert masked["credit_card"] != forged["credit_card"]
 
 def test_key_id_versions_prefixes_and_isolates_hashes():
     v1 = BlindLogger(secret_key="secret", key_id="v1")
