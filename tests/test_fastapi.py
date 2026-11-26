@@ -100,6 +100,30 @@ def test_fastapi_middleware_response_body_masked(caplog):
     assert "resp@example.com" not in response_lines[0]
     assert "blnd_ref_" in response_lines[0]
 
+def test_explicit_false_masks_when_blindlog_debug_is_true(monkeypatch, caplog):
+    monkeypatch.setenv("BLINDLOG_DEBUG", "true")
+
+    local_app = FastAPI()
+    logger = BlindLogger(secret_key="test-api-secret", debug_mode=False)
+    local_app.add_middleware(BlindLogFastAPIMiddleware, blind_logger=logger)
+
+    @local_app.post("/submit")
+    async def submit(payload: dict):
+        return {"email": payload["email"]}
+
+    local_client = TestClient(local_app)
+    with caplog.at_level(logging.INFO, logger="blindlog.middleware"):
+        response = local_client.post(
+            "/submit",
+            json={"email": "masked@example.com"},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+    assert response.status_code == 200
+    assert "masked@example.com" not in caplog.text
+    assert "secret-token" not in caplog.text
+    assert "blnd_ref_" in caplog.text
+
 def test_fastapi_middleware_skips_oversized_content_length(caplog):
     with caplog.at_level(logging.WARNING, logger="blindlog.middleware"):
         response = client.post(

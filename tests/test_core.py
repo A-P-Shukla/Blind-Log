@@ -1,6 +1,7 @@
 import pytest
 import os
 from blindlog import BlindLogger
+from blindlog.config import BlindLogConfig
 
 def test_logger_initialization():
     logger = BlindLogger(secret_key="test-secret")
@@ -53,6 +54,23 @@ def test_debug_mode():
     payload = {"email": "hello@world.com"}
     masked = logger.mask(payload)
     assert masked["email"] == "hello@world.com"
+
+def test_explicit_debug_mode_false_overrides_environment(monkeypatch):
+    monkeypatch.setenv("BLINDLOG_DEBUG", "true")
+    logger = BlindLogger(secret_key="secret", debug_mode=False)
+    payload = {"email": "hello@world.com", "password": "hunter2"}
+
+    masked = logger.mask(payload)
+
+    assert "hello@world.com" not in str(masked)
+    assert "hunter2" not in str(masked)
+    assert logger.config.debug_mode is False
+
+def test_unset_debug_mode_still_uses_environment(monkeypatch):
+    monkeypatch.setenv("BLINDLOG_DEBUG", "true")
+    config = BlindLogConfig(secret_key="secret")
+
+    assert config.debug_mode is True
 
 def test_hash_length_guard():
     logger = BlindLogger(secret_key="secret")
