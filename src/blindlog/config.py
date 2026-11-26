@@ -3,7 +3,7 @@ import re
 import warnings
 import hashlib
 from dataclasses import dataclass, field
-from typing import FrozenSet
+from typing import FrozenSet, Optional
 from blindlog.rules import DEFAULT_SENSITIVE_KEYS
 
 # key_id appears in mask prefixes (blnd_{key_id}_ref_...). Keep it short and
@@ -20,7 +20,7 @@ class BlindLogConfig:
     secret_key: str = ""
     salt: str = ""
     sensitive_keys: FrozenSet[str] = field(default_factory=lambda: frozenset(DEFAULT_SENSITIVE_KEYS))
-    debug_mode: bool = False
+    debug_mode: Optional[bool] = None
     # Optional rotation label embedded in mask prefixes (e.g. "v2" -> blnd_v2_ref_...).
     # Empty string keeps the unversioned v1.1 prefixes for backward compatibility.
     key_id: str = ""
@@ -39,9 +39,9 @@ class BlindLogConfig:
                 f"(got {self.key_id!r}). Example: 'v2'."
             )
         
-        env_debug = os.environ.get("BLINDLOG_DEBUG", "").lower() in ("true", "1", "yes")
-        if env_debug and not self.debug_mode:
-            object.__setattr__(self, 'debug_mode', True)
+        if self.debug_mode is None:
+            env_debug = os.environ.get("BLINDLOG_DEBUG", "").lower() in ("true", "1", "yes")
+            object.__setattr__(self, 'debug_mode', env_debug)
         
         if not self.secret_key and not self.debug_mode:
             raise ValueError("BlindLog: BLINDLOG_SECRET is not set. Refusing to run in non-debug mode to prevent cryptographic bypass.")
