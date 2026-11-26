@@ -163,6 +163,51 @@ def test_formatter_masks_extra_attributes():
     assert "blnd_ref_" in formatted
     assert "blnd_ph_" in formatted
 
+def test_formatter_masks_password_positional_argument():
+    import io
+    import logging
+    from blindlog.formatters import BlindLogFormatter
+
+    logger = BlindLogger(secret_key="secret")
+    fmt = BlindLogFormatter(blind_logger=logger)
+    log = logging.getLogger("test_formatter_password_argument")
+    log.handlers.clear()
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(fmt)
+    log.addHandler(handler)
+
+    log.info("password=%s", "hunter2")
+
+    assert "hunter2" not in buf.getvalue()
+    assert "blind:" in buf.getvalue()
+
+def test_formatter_masks_password_extra_attribute():
+    import logging
+    from blindlog.formatters import BlindLogFormatter
+
+    formatter = BlindLogFormatter(
+        "%(message)s password=%(password)s",
+        blind_logger=BlindLogger(secret_key="fmt-secret"),
+    )
+    record = logging.LogRecord(
+        name="test_logger",
+        level=logging.INFO,
+        pathname="test.py",
+        lineno=1,
+        msg="Login event",
+        args=(),
+        exc_info=None,
+    )
+    record.password = "hunter2"
+
+    formatted = formatter.format(record)
+
+    assert "hunter2" not in formatted
+    assert "blind:" in formatted
+
 def test_custom_rule_idempotency_force_path():
     import re
     logger = BlindLogger(secret_key="secret")
