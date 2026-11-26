@@ -1,5 +1,7 @@
 import logging
 import copy
+import re
+import string
 from typing import Optional
 from blindlog.interfaces import MaskingEngine
 
@@ -21,6 +23,7 @@ class BlindLogFormatter(logging.Formatter):
         super().__init__(fmt, datefmt, style)
         self._blind_logger = blind_logger
         self._initialized = blind_logger is not None
+        self._blindlog_style = style
 
     @property
     def blind_logger(self):
@@ -29,6 +32,47 @@ class BlindLogFormatter(logging.Formatter):
             self._blind_logger = BlindLogger()
             self._initialized = True
         return self._blind_logger
+
+    def _mask_with_key(self, key: str, value):
+        masked = self.blind_logger.mask({key: value})
+        if isinstance(masked, dict):
+            return masked.get(key, value)
+        return masked
+
+    def _infer_positional_keys(self, message, args_count: int) -> dict:
+        if not isinstance(message, str):
+            return {}
+
+        keys = {}
+
+        if self._blindlog_style == '%':
+            placeholder_re = re.compile(
+                r'([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|:)\s*'
+                r'%(?:[#0 +\-]*\d*(?:\.\d+)?[diouxXeEfFgGcrsa])'
+            )
+            for index, match in enumerate(placeholder_re.finditer(message)):
+                if index >= args_count:
+                    break
+                keys[index] = match.group(1)
+
+        elif self._blindlog_style in ('{', '$'):
+            try:
+                positional_index = 0
+                for _, field_name, _, _ in string.Formatter().parse(message):
+                    if not field_name:
+                        continue
+                    if field_name.isdigit():
+                        index = int(field_name)
+                    else:
+                        root_name = field_name.split('.')[0].split('[')[0]
+                        index = positional_index
+                        if index < args_count:
+                            keys[index] = root_name
+                    positional_index += 1
+            except (KeyError, ValueError):
+                pass
+
+        return keys
 
     def format(self, record: logging.LogRecord) -> str:
         record_copy = copy.copy(record)
@@ -46,14 +90,17 @@ class BlindLogFormatter(logging.Formatter):
                 if isinstance(args_copy, dict):
                     # Mapping style: logger.info("%(name)s logged in", {"name": "user@example.com"})
                     record_copy.args = {
-                        k: self.blind_logger.mask(v) if isinstance(v, (str, dict, list, tuple, set, frozenset)) else v
+                        k: self._mask_with_key(k, v)
                         for k, v in args_copy.items()
                     }
                 elif isinstance(args_copy, tuple):
                     # Positional style: logger.info("Hello %s", "user@example.com")
+                    positional_keys = self._infer_positional_keys(record_copy.msg, len(args_copy))
                     record_copy.args = tuple(
-                        self.blind_logger.mask(arg) if isinstance(arg, (str, dict, list, tuple, set, frozenset)) else arg
-                        for arg in args_copy
+                        self._mask_with_key(positional_keys[index], arg)
+                        if index in positional_keys
+                        else self.blind_logger.mask(arg)
+                        for index, arg in enumerate(args_copy)
                     )
 
             # Mask exception info to prevent PII leaks in stack traces
@@ -65,10 +112,10 @@ class BlindLogFormatter(logging.Formatter):
             # Mask extra custom attributes in record_copy.__dict__
             for attr, val in list(record_copy.__dict__.items()):
                 if attr not in _RESERVED_RECORD_ATTRS and not attr.startswith("_"):
-                    if isinstance(val, (str, dict, list, tuple, set, frozenset)):
-                        record_copy.__dict__[attr] = self.blind_logger.mask(
-                            copy.deepcopy(val) if isinstance(val, (dict, list, set, frozenset)) else val
-                        )
+                    record_copy.__dict__[attr] = self._mask_with_key(
+                        attr,
+                        copy.deepcopy(val) if isinstance(val, (dict, list, set, frozenset)) else val,
+                    )
 
         except Exception as e:
             _log.error("BlindLog: Masking failed. Reason: %s", e)
