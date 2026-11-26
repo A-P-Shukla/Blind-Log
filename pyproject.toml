@@ -13,7 +13,10 @@ authors = [
     {name = "A. P. Shukla"}
 ]
 keywords = ["logging", "pii", "privacy", "gdpr", "pseudonymization", "observability"]
-dependencies = []
+dependencies = [
+    "build>=1.4.4",
+    "twine>=6.2.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/A-P-Shukla/Blind-Log"
