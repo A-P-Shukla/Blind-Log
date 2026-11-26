@@ -2,7 +2,7 @@ import logging
 import copy
 import re
 import string
-from typing import Optional
+from typing import Literal, Optional
 from blindlog.interfaces import MaskingEngine
 
 _log = logging.getLogger("blindlog.formatter")
@@ -19,27 +19,37 @@ class BlindLogFormatter(logging.Formatter):
     A custom logging formatter that intercepts and pseudonymizes sensitive data 
     before it is written to the log stream.
     """
-    def __init__(self, fmt: Optional[str] = None, datefmt: Optional[str] = None, style: str = '%', blind_logger: Optional[MaskingEngine] = None):
+    def __init__(
+        self,
+        fmt: Optional[str] = None,
+        datefmt: Optional[str] = None,
+        style: Literal["%", "{", "$"] = "%",
+        blind_logger: Optional[MaskingEngine] = None,
+    ):
         super().__init__(fmt, datefmt, style)
         self._blind_logger = blind_logger
-        self._initialized = blind_logger is not None
         self._blindlog_style = style
 
     @property
-    def blind_logger(self):
-        if not self._initialized:
+    def blind_logger(self) -> MaskingEngine:
+        if self._blind_logger is None:
             from blindlog.core import BlindLogger
             self._blind_logger = BlindLogger()
-            self._initialized = True
         return self._blind_logger
 
-    def _mask_with_key(self, key: str, value):
+    def _mask_with_key(self, key: str, value: object) -> object:
         masked = self.blind_logger.mask({key: value})
         if isinstance(masked, dict):
             return masked.get(key, value)
         return masked
 
-    def _infer_positional_keys(self, message, args_count: int) -> dict:
+    def _mask_without_key(self, value: object) -> object:
+        masked = self.blind_logger.mask({"value": value})
+        if isinstance(masked, dict):
+            return masked.get("value", value)
+        return value
+
+    def _infer_positional_keys(self, message: object, args_count: int) -> dict[int, str]:
         if not isinstance(message, str):
             return {}
 
@@ -99,14 +109,17 @@ class BlindLogFormatter(logging.Formatter):
                     record_copy.args = tuple(
                         self._mask_with_key(positional_keys[index], arg)
                         if index in positional_keys
-                        else self.blind_logger.mask(arg)
+                        else self._mask_without_key(arg)
                         for index, arg in enumerate(args_copy)
                     )
 
             # Mask exception info to prevent PII leaks in stack traces
             if record_copy.exc_info and record_copy.exc_info[0] is not None:
                 exc_text = self.formatException(record_copy.exc_info)
-                record_copy.exc_text = self.blind_logger.mask(exc_text)
+                masked_exc_text = self.blind_logger.mask(exc_text)
+                if not isinstance(masked_exc_text, str):
+                    raise TypeError("MaskingEngine.mask must return str for string input")
+                record_copy.exc_text = masked_exc_text
                 record_copy.exc_info = None  # Prevent super() from re-formatting unmasked
 
             # Mask extra custom attributes in record_copy.__dict__
