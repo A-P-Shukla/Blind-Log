@@ -1,4 +1,4 @@
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 # Fix #15: Export all public-facing classes for clean DI
 from blindlog.core import BlindLogger
 from blindlog.config import BlindLogConfig

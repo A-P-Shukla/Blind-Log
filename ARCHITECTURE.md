@@ -1,4 +1,4 @@
-# BlindLog v1.2.1 Architecture
+# BlindLog v1.2.2 Architecture
 
 **Repository:** [https://github.com/A-P-Shukla/Blind-Log](https://github.com/A-P-Shukla/Blind-Log)
 
