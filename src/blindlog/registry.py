@@ -19,6 +19,7 @@ class RuleRegistry:
         self._rules: List[Tuple[re.Pattern, MaskCallback]] = []
         self._keyed_hash_fn = keyed_hash_fn
         self._lock = threading.RLock()
+        self._emitted_masks = set()
         
     def register(self, pattern: re.Pattern, callback: MaskCallback):
         """Registers a customized fallback regex structure."""
@@ -26,17 +27,23 @@ class RuleRegistry:
             self._rules.append((pattern, callback))
 
     def _is_already_masked(self, value: str) -> bool:
-        """Check if a value has already been masked to ensure idempotency."""
-        from blindlog.rules import MASKED_PATTERN
-        return bool(MASKED_PATTERN.match(value))
+        """Check only masks emitted by this registry during the process."""
+        with self._lock:
+            return value in self._emitted_masks
+
+    def _remember_mask(self, value: str) -> str:
+        if isinstance(value, str):
+            with self._lock:
+                self._emitted_masks.add(value)
+        return value
 
     def _secure_fallback(self, value: str) -> str:
         """Produce a keyed fallback hash."""
         if self._keyed_hash_fn:
-            return self._keyed_hash_fn(value)
+            return self._remember_mask(self._keyed_hash_fn(value))
         import hashlib
         _log.warning("BlindLog: Using unkeyed fallback hash — keyed_hash_fn not configured.")
-        return f"blind:{hashlib.blake2b(value.encode(), digest_size=8).hexdigest()}"
+        return self._remember_mask(f"blind:{hashlib.blake2b(value.encode(), digest_size=8).hexdigest()}")
         
     def process_value(self, value: str, fallback_callback: MaskCallback) -> str:
         """
@@ -53,11 +60,11 @@ class RuleRegistry:
         for pattern, callback in rules:
             if pattern.fullmatch(value):
                 try:
-                    return callback(value)
+                    return self._remember_mask(callback(value))
                 except Exception as e:
                     _log.warning(f"BlindLog: Callback failed for pattern {pattern.pattern}: {e}. Using fallback.")
-                    return fallback_callback(value)
-        return fallback_callback(value)
+                    return self._remember_mask(fallback_callback(value))
+        return self._remember_mask(fallback_callback(value))
         
     def process_text(self, text: str) -> str:
         """
@@ -73,7 +80,7 @@ class RuleRegistry:
                 if self._is_already_masked(matched):
                     return matched
                 try:
-                    return cb(matched)
+                    return self._remember_mask(cb(matched))
                 except Exception as e:
                     _log.warning(f"BlindLog: Callback failed during text scan: {e}. Applying keyed fallback.")
                     return self._secure_fallback(matched)
