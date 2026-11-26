@@ -1,12 +1,12 @@
-from typing import Any, Set, Callable
+from typing import AbstractSet, Any, Callable, Optional, Set
 from blindlog.rules import normalize_key
 
 def walk_and_mask(
     data: Any, 
-    sensitive_keys: Set[str], 
+    sensitive_keys: AbstractSet[str],
     mask_value_fn: Callable[[str], str],
     mask_text_fn: Callable[[str], str],
-    visited: set = None,
+    visited: Optional[Set[int]] = None,
     force_mask: bool = False
 ) -> Any:
     """

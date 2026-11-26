@@ -6,6 +6,8 @@ import threading
 _log = logging.getLogger("blindlog.registry")
 
 MaskCallback = Callable[[str], str]
+MaskVerifier = Callable[[str], bool]
+MaskRecorder = Callable[[str], None]
 
 class RuleRegistry:
     """
@@ -15,11 +17,17 @@ class RuleRegistry:
     ``register()`` and the process methods share a lock so concurrent
     ``mask()`` calls are safe. Prefer registering rules at startup.
     """
-    def __init__(self, keyed_hash_fn: Optional[MaskCallback] = None):
+    def __init__(
+        self,
+        keyed_hash_fn: Optional[MaskCallback] = None,
+        masked_verifier: Optional[MaskVerifier] = None,
+        mask_recorder: Optional[MaskRecorder] = None,
+    ):
         self._rules: List[Tuple[re.Pattern, MaskCallback]] = []
         self._keyed_hash_fn = keyed_hash_fn
+        self._masked_verifier = masked_verifier
+        self._mask_recorder = mask_recorder
         self._lock = threading.RLock()
-        self._emitted_masks = set()
         
     def register(self, pattern: re.Pattern, callback: MaskCallback):
         """Registers a customized fallback regex structure."""
@@ -27,23 +35,22 @@ class RuleRegistry:
             self._rules.append((pattern, callback))
 
     def _is_already_masked(self, value: str) -> bool:
-        """Check only masks emitted by this registry during the process."""
-        with self._lock:
-            return value in self._emitted_masks
+        """Check whether a mask is authentic or was emitted by this registry."""
+        if self._masked_verifier:
+            return bool(self._masked_verifier(value))
+        return False
 
-    def _remember_mask(self, value: str) -> str:
-        if isinstance(value, str):
-            with self._lock:
-                self._emitted_masks.add(value)
-        return value
+    def _record_mask(self, value: str):
+        if self._mask_recorder and isinstance(value, str):
+            self._mask_recorder(value)
 
     def _secure_fallback(self, value: str) -> str:
         """Produce a keyed fallback hash."""
         if self._keyed_hash_fn:
-            return self._remember_mask(self._keyed_hash_fn(value))
+            return self._keyed_hash_fn(value)
         import hashlib
         _log.warning("BlindLog: Using unkeyed fallback hash — keyed_hash_fn not configured.")
-        return self._remember_mask(f"blind:{hashlib.blake2b(value.encode(), digest_size=8).hexdigest()}")
+        return f"blind:{hashlib.blake2b(value.encode(), digest_size=8).hexdigest()}"
         
     def process_value(self, value: str, fallback_callback: MaskCallback) -> str:
         """
@@ -60,11 +67,17 @@ class RuleRegistry:
         for pattern, callback in rules:
             if pattern.fullmatch(value):
                 try:
-                    return self._remember_mask(callback(value))
+                    masked = callback(value)
+                    self._record_mask(masked)
+                    return masked
                 except Exception as e:
                     _log.warning(f"BlindLog: Callback failed for pattern {pattern.pattern}: {e}. Using fallback.")
-                    return self._remember_mask(fallback_callback(value))
-        return self._remember_mask(fallback_callback(value))
+                    masked = fallback_callback(value)
+                    self._record_mask(masked)
+                    return masked
+        masked = fallback_callback(value)
+        self._record_mask(masked)
+        return masked
         
     def process_text(self, text: str) -> str:
         """
@@ -80,9 +93,13 @@ class RuleRegistry:
                 if self._is_already_masked(matched):
                     return matched
                 try:
-                    return self._remember_mask(cb(matched))
+                    masked = cb(matched)
+                    self._record_mask(masked)
+                    return masked
                 except Exception as e:
                     _log.warning(f"BlindLog: Callback failed during text scan: {e}. Applying keyed fallback.")
-                    return self._secure_fallback(matched)
+                    masked = self._secure_fallback(matched)
+                    self._record_mask(masked)
+                    return masked
             text = pattern.sub(safe_sub, text)
         return text
