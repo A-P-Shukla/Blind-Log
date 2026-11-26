@@ -1,16 +1,16 @@
 import hashlib
-import logging
+import hmac
+import re
+import threading
 from typing import Optional
 from blindlog.rules import (
     EMAIL_REGEX, CREDIT_CARD_REGEX, IPV4_REGEX, API_KEY_REGEX, PHONE_REGEX, SSN_REGEX,
-    OPAQUE_HASH_LEN, EMAIL_HASH_LEN, CC_HASH_LEN,
+    EMAIL_HASH_LEN,
 )
 from blindlog.utils import walk_and_mask
 from blindlog.config import BlindLogConfig
 from blindlog.registry import RuleRegistry
 from blindlog.interfaces import MaskingEngine, Payload
-
-_log = logging.getLogger("blindlog.core")
 
 class BlindLogger(MaskingEngine):
     """
@@ -26,14 +26,20 @@ class BlindLogger(MaskingEngine):
         **kwargs
     ):
         self.config = config if config else BlindLogConfig(**kwargs)
+        self._authenticated_masks: set[str] = set()
+        self._authenticated_masks_lock = threading.RLock()
         
-        self.registry = RuleRegistry(keyed_hash_fn=self._opaque)
+        self.registry = RuleRegistry(
+            keyed_hash_fn=self._opaque,
+            masked_verifier=self._is_authenticated_mask,
+            mask_recorder=self._remember_mask,
+        )
         self.registry.register(EMAIL_REGEX, self._mask_email)
         self.registry.register(CREDIT_CARD_REGEX, self._mask_cc)
-        self.registry.register(IPV4_REGEX, lambda v: f"{self._tag('ip')}{self._hash(v, length=OPAQUE_HASH_LEN)}")
-        self.registry.register(API_KEY_REGEX, lambda v: f"{self._tag('key')}{self._hash(v, length=OPAQUE_HASH_LEN)}")
-        self.registry.register(PHONE_REGEX, lambda v: f"{self._tag('ph')}{self._hash(v, length=OPAQUE_HASH_LEN)}")
-        self.registry.register(SSN_REGEX, lambda v: f"{self._tag('ssn')}{self._hash(v, length=OPAQUE_HASH_LEN)}")
+        self.registry.register(IPV4_REGEX, lambda v: f"{self._tag('ip')}{self._signed_hash(v, 'ip')}")
+        self.registry.register(API_KEY_REGEX, lambda v: f"{self._tag('key')}{self._signed_hash(v, 'key')}")
+        self.registry.register(PHONE_REGEX, lambda v: f"{self._tag('ph')}{self._signed_hash(v, 'ph')}")
+        self.registry.register(SSN_REGEX, lambda v: f"{self._tag('ssn')}{self._signed_hash(v, 'ssn')}")
 
     def tag(self, kind: str) -> str:
         """Public helper to build a mask prefix, optionally versioned with config.key_id."""
@@ -47,19 +53,85 @@ class BlindLogger(MaskingEngine):
     def _tag(self, kind: str) -> str:
         return self.tag(kind)
 
+    def _auth_hex(self, material: str, length: int = 8) -> str:
+        return hmac.new(
+            self.config.blake_key,
+            material.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()[:length]
+
+    def _signed_hash(self, value: str, kind: str) -> str:
+        payload_hash = self._hash(value, length=8)
+        auth = self._auth_hex(f"{kind}\x00{payload_hash}", length=8)
+        return payload_hash + auth
+
+    def _remember_mask(self, value: str) -> None:
+        with self._authenticated_masks_lock:
+            self._authenticated_masks.add(value)
+
+    def _verify_signed(self, value: str, prefix: str, kind: str) -> bool:
+        if not value.startswith(prefix) or len(value) != len(prefix) + 16:
+            return False
+        payload = value[len(prefix):]
+        if not re.fullmatch(r"[0-9a-f]{16}", payload):
+            return False
+        return hmac.compare_digest(
+            payload[8:],
+            self._auth_hex(f"{kind}\x00{payload[:8]}", length=8),
+        )
+
+    def _is_authenticated_mask(self, value: str) -> bool:
+        if not isinstance(value, str):
+            return False
+
+        with self._authenticated_masks_lock:
+            if value in self._authenticated_masks:
+                return True
+
+        if value.startswith(self._tag("blind")):
+            return self._verify_signed(value, self._tag("blind"), "blind")
+
+        email_match = re.fullmatch(
+            re.escape(self._tag("ref")) + r"([0-9a-f]{16})\.\.\.@masked\.com",
+            value,
+        )
+        if email_match:
+            payload = email_match.group(1)
+            return hmac.compare_digest(
+                payload[8:],
+                self._auth_hex(f"ref\x00{payload[:8]}", length=8),
+            )
+
+        cc_match = re.fullmatch(r"(\d{4})-([0-9a-f]{8})-([0-9a-f]{8})-(\d{4})", value)
+        if cc_match:
+            first, hash_part, auth_part, last = cc_match.groups()
+            return hmac.compare_digest(
+                auth_part,
+                self._auth_hex(
+                    f"cc\x00{first}\x00{hash_part}\x00{last}",
+                    length=8,
+                ),
+            )
+
+        generic_match = re.fullmatch(
+            r"blnd(?:_[A-Za-z][A-Za-z0-9_]{0,15})?_([a-z0-9_]{1,16})_([0-9a-f]{16})",
+            value,
+        )
+        if generic_match:
+            kind, payload = generic_match.groups()
+            return hmac.compare_digest(
+                payload[8:],
+                self._auth_hex(f"{kind}\x00{payload[:8]}", length=8),
+            )
+
+        return False
+
     def hash_text(self, value: str, length: int = EMAIL_HASH_LEN) -> str:
         """Public deterministic keyed BLAKE2b hashing method."""
         return self._hash(value, length=length)
-        """Build a mask prefix, optionally versioned with config.key_id."""
-        kid = self.config.key_id
-        if kind == "blind":
-            return f"blind_{kid}:" if kid else "blind:"
-        if kid:
-            return f"blnd_{kid}_{kind}_"
-        return f"blnd_{kind}_"
 
     def _opaque(self, value: str) -> str:
-        return f"{self._tag('blind')}{self._hash(value, length=OPAQUE_HASH_LEN)}"
+        return f"{self._tag('blind')}{self._signed_hash(value, 'blind')}"
         
     def _hash(self, value: str, length: int = EMAIL_HASH_LEN) -> str:
         if length < 1:
@@ -75,12 +147,8 @@ class BlindLogger(MaskingEngine):
 
     def _mask_email(self, email: str) -> str:
         """Structure-preserving mask for emails: blnd_ref_HASH...@masked.com"""
-        try:
-            _local, _domain = email.rsplit('@', 1)
-            hash_val = self._hash(email, length=EMAIL_HASH_LEN)
-            return f"{self._tag('ref')}{hash_val}...@masked.com"
-        except ValueError:
-            return f"{self._tag('ref')}{self._hash(email, length=EMAIL_HASH_LEN)}...@masked.com"
+        hash_val = self._signed_hash(email, 'ref')
+        return f"{self._tag('ref')}{hash_val}...@masked.com"
 
     def _mask_cc(self, cc: str) -> str:
         """Structure-preserving mask for credit cards: 4111-abcdefgh-ijklmnop-1234 (64-bit)."""
@@ -88,9 +156,18 @@ class BlindLogger(MaskingEngine):
         if len(clean_cc) >= 12:
             first_4 = clean_cc[:4]
             last_4 = clean_cc[-4:]
-            hash_val = self._hash(clean_cc, length=CC_HASH_LEN)
-            return f"{first_4}-{hash_val[:8]}-{hash_val[8:16]}-{last_4}"
-        return self._hash(cc, length=CC_HASH_LEN)
+            hash_part = self._hash(clean_cc, length=8)
+            auth_part = self._auth_hex(
+                f"cc\x00{first_4}\x00{hash_part}\x00{last_4}",
+                length=8,
+            )
+            return f"{first_4}-{hash_part}-{auth_part}-{last_4}"
+        hash_part = self._hash(cc, length=8)
+        auth_part = self._auth_hex(
+            f"cc\x00{cc[:4]}\x00{hash_part}\x00{cc[-4:]}",
+            length=8,
+        )
+        return f"{cc[:4]}-{hash_part}-{auth_part}-{cc[-4:]}"
 
     def _mask_value(self, value: str) -> str:
         # Force-path / keyed values: skip regex on huge inputs (ReDoS), but still

@@ -24,6 +24,7 @@ class BlindLogConfig:
     # Optional rotation label embedded in mask prefixes (e.g. "v2" -> blnd_v2_ref_...).
     # Empty string keeps the unversioned v1.1 prefixes for backward compatibility.
     key_id: str = ""
+    _blake_key_cache: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not self.secret_key:
